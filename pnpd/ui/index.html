@@ -1,0 +1,658 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PNP · Wire</title>
+<style>
+  :root {
+    --bg: #16161e; --panel: #1a1b26; --panel2: #1f2130; --line: #2a2c3d;
+    --text: #c0caf5; --dim: #787c99; --faint: #565a7c;
+    --arp: #e0af68; --tcp: #7aa2f7; --udp: #2ac3de; --dns: #0db9d7;
+    --dhcp: #9ece6a; --icmp: #f7768e; --icmp6: #bb9af7; --nd: #bb9af7;
+    --mld: #c0a36e; --other: #787c99;
+    --ok: #9ece6a; --warn: #e0af68; --bad: #f7768e;
+    --mono: ui-monospace, "JetBrains Mono", "Cascadia Code", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 13px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+
+  header {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--line);
+  }
+  .brand { display: flex; align-items: baseline; gap: 8px; }
+  .brand b { font-size: 15px; letter-spacing: .4px; }
+  .brand span { color: var(--dim); font-size: 12px; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--bad); display: inline-block; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+  .dot.stale { background: var(--warn); }
+
+  .stats { display: flex; gap: 14px; color: var(--dim); font-size: 12px; }
+  .stats b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+  .stats .drops b.nonzero { color: var(--bad); }
+
+  .controls { display: flex; align-items: center; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+  input[type=search] {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 5px 10px; width: 220px; outline: none; font-size: 13px;
+  }
+  input[type=search]:focus { border-color: var(--tcp); }
+  button {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 6px; padding: 5px 12px; cursor: pointer; font-size: 12.5px;
+  }
+  button:hover { border-color: var(--dim); }
+  button.on { border-color: var(--tcp); color: var(--tcp); }
+  button.paused { border-color: var(--warn); color: var(--warn); }
+
+  .chips { display: flex; gap: 6px; padding: 8px 16px; background: var(--panel); border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .chip {
+    font-size: 11.5px; font-family: var(--mono); padding: 2px 10px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--dim); cursor: pointer; user-select: none;
+  }
+  .chip.on { color: var(--bg); border-color: transparent; }
+
+  main { flex: 1; display: flex; min-height: 0; }
+  #tablewrap { flex: 1 1 60%; overflow-y: auto; min-width: 0; }
+  table { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 12px; }
+  thead th {
+    position: sticky; top: 0; background: var(--panel2); color: var(--dim);
+    text-align: left; font-weight: 500; padding: 6px 8px; border-bottom: 1px solid var(--line);
+    font-size: 11px; text-transform: uppercase; letter-spacing: .5px; z-index: 1;
+  }
+  tbody td { padding: 3.5px 8px; border-bottom: 1px solid #1e2030; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  tbody tr { cursor: pointer; }
+  tbody tr:hover { background: #1e2233; }
+  tbody tr.sel { background: #24283b; outline: 1px solid var(--line); }
+  td.seq { color: var(--faint); width: 1%; }
+  td.time { color: var(--dim); width: 1%; }
+  td.iface { color: var(--dim); width: 1%; }
+  td.dir { width: 1%; text-align: center; }
+  td.len { color: var(--dim); text-align: right; width: 1%; }
+  td.summary { max-width: 0; width: 55%; color: var(--text); }
+  td.addr { max-width: 0; width: 16%; }
+  .badge {
+    display: inline-block; min-width: 46px; text-align: center; padding: 1px 7px;
+    border-radius: 4px; color: var(--bg); font-weight: 700; font-size: 10.5px;
+  }
+  .dir-in { color: var(--ok); } .dir-out { color: var(--tcp); }
+  .dir-bcast, .dir-mcast { color: var(--warn); } .dir-other { color: var(--faint); }
+
+  #empty {
+    padding: 60px 20px; text-align: center; color: var(--dim);
+  }
+  #empty .big { font-size: 15px; margin-bottom: 6px; color: var(--text); }
+
+  #detail {
+    flex: 1 1 40%; max-width: 46%; border-left: 1px solid var(--line);
+    background: var(--panel); overflow-y: auto; display: none; min-width: 0;
+  }
+  #detail.open { display: block; }
+  #detail .dhead {
+    position: sticky; top: 0; background: var(--panel2); padding: 8px 14px;
+    border-bottom: 1px solid var(--line); display: flex; align-items: center; gap: 10px;
+  }
+  #detail .dhead .close { margin-left: auto; }
+  #detail .dsummary { font-family: var(--mono); font-size: 12.5px; }
+  details.layer { border-bottom: 1px solid var(--line); }
+  details.layer summary {
+    padding: 7px 14px; cursor: pointer; font-weight: 600; font-size: 12.5px;
+    color: var(--text); user-select: none; list-style: none;
+  }
+  details.layer summary::before { content: "▸ "; color: var(--dim); }
+  details.layer[open] summary::before { content: "▾ "; }
+  .fields { padding: 2px 14px 10px 26px; display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; font-family: var(--mono); font-size: 12px; }
+  .fields .k { color: var(--dim); }
+  .fields .v { color: var(--text); word-break: break-all; }
+  #hex { padding: 10px 14px 20px; font-family: var(--mono); font-size: 11.5px; color: var(--dim); white-space: pre; overflow-x: auto; }
+  #hex .off { color: var(--faint); } #hex .asc { color: var(--faint); }
+
+  footer {
+    padding: 5px 16px; background: var(--panel); border-top: 1px solid var(--line);
+    color: var(--faint); font-size: 11px; display: flex; gap: 16px;
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot" id="dot"></span><b>PNP · Wire</b><span>packet viewer</span></div>
+  <div class="stats">
+    <span>captured <b id="s-cap">0</b></span>
+    <span class="drops">dropped <b id="s-drop">0</b></span>
+    <span>own traffic hidden <b id="s-sup">0</b></span>
+    <span>shown <b id="s-shown">0</b></span>
+  </div>
+  <div class="controls">
+    <input type="search" id="filter" placeholder="filter: address, name, text…">
+    <button id="follow" class="on" title="keep scrolled to the newest packet">follow</button>
+    <button id="pause" title="stop appending (capture continues)">pause</button>
+    <button id="clear" title="clear the view (not the daemon ring)">clear</button>
+  </div>
+</header>
+<div class="chips" id="chips"></div>
+<main>
+  <div id="tablewrap">
+    <div id="empty">
+      <div class="big">The wire is quiet.</div>
+      <div>This is a Peios VM at idle — expect ARP, DHCP renewals, and neighbor discovery.<br>
+      Run <code>ping 10.0.2.2</code> or <code>curl example.com</code> in the guest to make a story appear.</div>
+    </div>
+    <table id="tbl" hidden>
+      <thead><tr>
+        <th>#</th><th>Time</th><th>If</th><th></th><th>Proto</th>
+        <th>Source</th><th>Destination</th><th>Len</th><th>Summary</th>
+      </tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+  <div id="detail">
+    <div class="dhead">
+      <span class="dsummary" id="dsummary"></span>
+      <button class="close" id="dclose">✕</button>
+    </div>
+    <div id="layers"></div>
+    <div id="hex"></div>
+  </div>
+</main>
+<footer>
+  <span id="f-daemon"></span>
+  <span>the tap sees inbound before any filtering and outbound as handed to the driver — outbound checksums may be unfilled and offloaded frames oversized; that is placement, not corruption</span>
+</footer>
+
+<script>
+"use strict";
+
+/* ---------------- byte helpers ---------------- */
+const u16 = (b, o) => (b[o] << 8) | b[o + 1];
+const u32 = (b, o) => ((b[o] << 24) | (b[o+1] << 16) | (b[o+2] << 8) | b[o+3]) >>> 0;
+function hexToBytes(h) {
+  const out = new Uint8Array(h.length >> 1);
+  for (let i = 0; i < out.length; i++) out[i] = parseInt(h.substr(i * 2, 2), 16);
+  return out;
+}
+const mac = (b, o) => [...b.slice(o, o + 6)].map(x => x.toString(16).padStart(2, "0")).join(":");
+const ip4 = (b, o) => `${b[o]}.${b[o+1]}.${b[o+2]}.${b[o+3]}`;
+function ip6(b, o) {
+  const g = []; for (let i = 0; i < 8; i++) g.push(u16(b, o + i * 2));
+  // longest zero run → ::
+  let bs = -1, bl = 0, cs = -1, cl = 0;
+  for (let i = 0; i < 8; i++) {
+    if (g[i] === 0) { if (cs < 0) cs = i; cl++; if (cl > bl) { bl = cl; bs = cs; } }
+    else { cs = -1; cl = 0; }
+  }
+  if (bl < 2) return g.map(x => x.toString(16)).join(":");
+  const left = g.slice(0, bs).map(x => x.toString(16)).join(":");
+  const right = g.slice(bs + bl).map(x => x.toString(16)).join(":");
+  return `${left}::${right}`;
+}
+
+/* ---------------- dissectors ----------------
+   Each returns {proto, src, dst, summary, layers:[{name, fields:[[k,v]…]}]}
+   proto keys drive colors + filter chips. */
+
+const PORTS = {20:"ftp-data",21:"ftp",22:"ssh",25:"smtp",53:"dns",67:"dhcp",68:"dhcp",80:"http",
+  123:"ntp",443:"https",546:"dhcp6",547:"dhcp6",853:"dot",4460:"nts-ke",5353:"mdns",5355:"llmnr"};
+const svc = p => PORTS[p] ? `${p} (${PORTS[p]})` : `${p}`;
+
+function dissect(bytes) {
+  const r = { proto: "other", src: "", dst: "", summary: "", layers: [] };
+  if (bytes.length < 14) { r.summary = `runt frame (${bytes.length}B)`; return r; }
+  let et = u16(bytes, 12), off = 14;
+  const eth = { name: "Ethernet", fields: [["destination", mac(bytes, 0)], ["source", mac(bytes, 6)]] };
+  if (et === 0x8100 && bytes.length >= 18) {
+    eth.fields.push(["vlan", String(u16(bytes, 14) & 0x0fff)]);
+    et = u16(bytes, 16); off = 18;
+  }
+  eth.fields.push(["ethertype", `0x${et.toString(16).padStart(4, "0")}`]);
+  r.layers.push(eth);
+  r.src = mac(bytes, 6); r.dst = mac(bytes, 0);
+  if (et === 0x0806) return arp(bytes, off, r);
+  if (et === 0x0800) return ipv4(bytes, off, r);
+  if (et === 0x86dd) return ipv6h(bytes, off, r);
+  r.summary = `ethertype 0x${et.toString(16)}`;
+  return r;
+}
+
+function arp(b, o, r) {
+  r.proto = "arp";
+  if (b.length < o + 28) { r.summary = "ARP (truncated)"; return r; }
+  const op = u16(b, o + 6);
+  const spa = ip4(b, o + 14), tpa = ip4(b, o + 24), sha = mac(b, o + 8);
+  r.src = spa; r.dst = tpa;
+  r.layers.push({ name: "ARP", fields: [
+    ["operation", op === 1 ? "request (1)" : op === 2 ? "reply (2)" : String(op)],
+    ["sender", `${sha} / ${spa}`], ["target", `${mac(b, o + 18)} / ${tpa}`]]});
+  r.summary = op === 1 ? `ARP who-has ${tpa}? tell ${spa}` : `ARP ${spa} is-at ${sha}`;
+  return r;
+}
+
+const IPPROTO = {1:"ICMP",2:"IGMP",6:"TCP",17:"UDP",58:"ICMPv6"};
+
+function ipv4(b, o, r) {
+  if (b.length < o + 20) { r.summary = "IPv4 (truncated)"; return r; }
+  const ihl = (b[o] & 0x0f) * 4, ttl = b[o + 8], proto = b[o + 9];
+  const src = ip4(b, o + 12), dst = ip4(b, o + 16);
+  const flags = b[o + 6] >> 5, fragoff = (u16(b, o + 6) & 0x1fff) * 8;
+  r.src = src; r.dst = dst; r.proto = "other";
+  const f = [["source", src], ["destination", dst], ["ttl", String(ttl)],
+    ["protocol", `${IPPROTO[proto] || "?"} (${proto})`], ["total length", String(u16(b, o + 2))],
+    ["id", `0x${u16(b, o + 4).toString(16)}`]];
+  if (flags & 2) f.push(["flags", "DF"]);
+  if (fragoff || (flags & 1)) f.push(["fragment", `offset ${fragoff}${flags & 1 ? ", more" : ""}`]);
+  r.layers.push({ name: "IPv4", fields: f });
+  if (fragoff > 0) { r.summary = `IPv4 fragment ${src} → ${dst}`; return r; }
+  return l4(b, o + ihl, proto, r, 4);
+}
+
+function ipv6h(b, o, r) {
+  if (b.length < o + 40) { r.summary = "IPv6 (truncated)"; return r; }
+  let next = b[o + 6];
+  const src = ip6(b, o + 8), dst = ip6(b, o + 24);
+  r.src = src; r.dst = dst;
+  r.layers.push({ name: "IPv6", fields: [["source", src], ["destination", dst],
+    ["hop limit", String(b[o + 7])], ["payload length", String(u16(b, o + 4))],
+    ["next header", `${IPPROTO[next] || next}`]]});
+  let p = o + 40;
+  const exts = [];
+  for (let guard = 0; guard < 8; guard++) {
+    if (next === 0 || next === 43 || next === 60) {
+      if (b.length < p + 8) break;
+      exts.push(next); const len = (b[p + 1] + 1) * 8; next = b[p]; p += len;
+    } else if (next === 44) {
+      if (b.length < p + 8) break;
+      exts.push(44); next = b[p]; p += 8;
+      r.layers.push({ name: "IPv6 fragment header", fields: [["offset", String((u16(b, p - 6) & 0xfff8))]] });
+    } else break;
+  }
+  if (exts.length) r.layers[r.layers.length - 1].fields.push(["extension headers", exts.join(", ")]);
+  return l4(b, p, next, r, 6);
+}
+
+function l4(b, o, proto, r, v) {
+  if (proto === 6) return tcp(b, o, r);
+  if (proto === 17) return udp(b, o, r);
+  if (proto === 1 && v === 4) return icmp4(b, o, r);
+  if (proto === 58 && v === 6) return icmp6(b, o, r);
+  if (proto === 2 && v === 4) return igmp(b, o, r);
+  r.proto = "other";
+  r.summary = `${IPPROTO[proto] || "proto " + proto} ${r.src} → ${r.dst}`;
+  return r;
+}
+
+function tcp(b, o, r) {
+  r.proto = "tcp";
+  if (b.length < o + 20) { r.summary = "TCP (truncated)"; return r; }
+  const sp = u16(b, o), dp = u16(b, o + 2);
+  const seq = u32(b, o + 4), ack = u32(b, o + 8);
+  const fl = b[o + 13];
+  const names = [[0x02,"SYN"],[0x10,"ACK"],[0x01,"FIN"],[0x04,"RST"],[0x08,"PSH"],[0x20,"URG"]];
+  const flags = names.filter(([m]) => fl & m).map(([,n]) => n).join(",") || "none";
+  r.layers.push({ name: "TCP", fields: [["source port", svc(sp)], ["destination port", svc(dp)],
+    ["flags", flags], ["sequence", String(seq)], ["ack", String(ack)], ["window", String(u16(b, o + 14))]]});
+  r.src += `:${sp}`; r.dst += `:${dp}`;
+  r.summary = `TCP ${svc(sp)} → ${svc(dp)} [${flags}]`;
+  return r;
+}
+
+function udp(b, o, r) {
+  r.proto = "udp";
+  if (b.length < o + 8) { r.summary = "UDP (truncated)"; return r; }
+  const sp = u16(b, o), dp = u16(b, o + 2);
+  r.layers.push({ name: "UDP", fields: [["source port", svc(sp)], ["destination port", svc(dp)],
+    ["length", String(u16(b, o + 4))]]});
+  r.src += `:${sp}`; r.dst += `:${dp}`;
+  const p = o + 8;
+  if (sp === 53 || dp === 53 || sp === 5353 || dp === 5353 || sp === 5355 || dp === 5355)
+    return dns(b, p, r, sp === 5353 || dp === 5353 ? "mDNS" : sp === 5355 || dp === 5355 ? "LLMNR" : "DNS");
+  if (sp === 67 || dp === 67 || sp === 68 || dp === 68) return dhcp4(b, p, r);
+  if (sp === 546 || dp === 546 || sp === 547 || dp === 547) return dhcp6(b, p, r);
+  r.summary = `UDP ${svc(sp)} → ${svc(dp)}`;
+  return r;
+}
+
+/* DNS name with compression; guarded. */
+function dnsName(b, o, depth) {
+  let out = [], guard = 0;
+  while (o < b.length && guard++ < 64) {
+    const len = b[o];
+    if (len === 0) return [out.join(".") || ".", o + 1];
+    if ((len & 0xc0) === 0xc0) {
+      if (depth > 4 || o + 1 >= b.length) return [out.join("."), o + 2];
+      const ptr = ((len & 0x3f) << 8) | b[o + 1];
+      const [rest] = dnsName(b, ptr, depth + 1);
+      out.push(rest);
+      return [out.join("."), o + 2];
+    }
+    out.push(new TextDecoder().decode(b.slice(o + 1, o + 1 + len)));
+    o += 1 + len;
+  }
+  return [out.join("."), o];
+}
+const QTYPES = {1:"A",2:"NS",5:"CNAME",6:"SOA",12:"PTR",15:"MX",16:"TXT",28:"AAAA",33:"SRV",65:"HTTPS",255:"ANY"};
+
+function dns(b, o, r, label) {
+  r.proto = "dns";
+  if (b.length < o + 12) { r.summary = `${label} (truncated)`; return r; }
+  const id = u16(b, o), flags = u16(b, o + 2);
+  const qr = flags >> 15, rcode = flags & 0xf;
+  const qd = u16(b, o + 4), an = u16(b, o + 6);
+  const f = [["id", `0x${id.toString(16).padStart(4, "0")}`], ["type", qr ? "response" : "query"],
+    ["questions", String(qd)], ["answers", String(an)]];
+  if (qr && rcode) f.push(["rcode", ["NOERROR","FORMERR","SERVFAIL","NXDOMAIN","NOTIMP","REFUSED"][rcode] || String(rcode)]);
+  let p = o + 12, qname = "", qtype = "";
+  if (qd > 0) {
+    const [name, np] = dnsName(b, p, 0);
+    qname = name; qtype = QTYPES[u16(b, np)] || String(u16(b, np));
+    f.push(["question", `${qtype} ${qname}`]);
+    p = np + 4;
+  }
+  const answers = [];
+  for (let i = 0; i < an && p < b.length && i < 8; i++) {
+    const [, np] = dnsName(b, p, 0);
+    if (np + 10 > b.length) break;
+    const t = u16(b, np), rdlen = u16(b, np + 8), rd = np + 10;
+    if (t === 1 && rdlen === 4) answers.push(ip4(b, rd));
+    else if (t === 28 && rdlen === 16) answers.push(ip6(b, rd));
+    else if (t === 5 || t === 12) answers.push(dnsName(b, rd, 0)[0]);
+    else answers.push(QTYPES[t] || `type${t}`);
+    p = rd + rdlen;
+  }
+  if (answers.length) f.push(["answer data", answers.join(", ")]);
+  r.layers.push({ name: label, fields: f });
+  r.summary = qr
+    ? `${label} response ${qtype} ${qname}${rcode ? " " + (["","FORMERR","SERVFAIL","NXDOMAIN"][rcode] || "err") : ""}${answers.length ? " → " + answers[0] + (answers.length > 1 ? ` (+${answers.length - 1})` : "") : ""}`
+    : `${label} query ${qtype} ${qname}`;
+  return r;
+}
+
+const DHCP_TYPES = {1:"DISCOVER",2:"OFFER",3:"REQUEST",4:"DECLINE",5:"ACK",6:"NAK",7:"RELEASE",8:"INFORM"};
+function dhcp4(b, o, r) {
+  r.proto = "dhcp";
+  if (b.length < o + 240) { r.summary = "DHCP (truncated)"; return r; }
+  const yiaddr = ip4(b, o + 16);
+  const f = [["op", b[o] === 1 ? "request (1)" : "reply (2)"], ["xid", `0x${u32(b, o + 4).toString(16)}`]];
+  if (yiaddr !== "0.0.0.0") f.push(["your address", yiaddr]);
+  let type = "";
+  if (u32(b, o + 236) === 0x63825363) {
+    let p = o + 240;
+    while (p + 1 < b.length) {
+      const code = b[p];
+      if (code === 255 || code === 0) { if (code === 0) { p++; continue; } break; }
+      const len = b[p + 1], v = p + 2;
+      if (code === 53 && len >= 1) { type = DHCP_TYPES[b[v]] || String(b[v]); f.push(["message type", type]); }
+      if (code === 54 && len === 4) f.push(["server", ip4(b, v)]);
+      if (code === 51 && len === 4) f.push(["lease", `${u32(b, v)}s`]);
+      p = v + len;
+    }
+  }
+  r.layers.push({ name: "DHCP", fields: f });
+  r.summary = `DHCP ${type || (b[o] === 1 ? "request" : "reply")}${yiaddr !== "0.0.0.0" ? " " + yiaddr : ""}`;
+  return r;
+}
+
+const DHCP6_TYPES = {1:"SOLICIT",2:"ADVERTISE",3:"REQUEST",4:"CONFIRM",5:"RENEW",6:"REBIND",7:"REPLY",8:"RELEASE",9:"DECLINE",10:"RECONFIGURE",11:"INFORMATION-REQUEST",12:"RELAY-FORW",13:"RELAY-REPL"};
+function dhcp6(b, o, r) {
+  r.proto = "dhcp";
+  if (b.length < o + 4) { r.summary = "DHCPv6 (truncated)"; return r; }
+  const t = DHCP6_TYPES[b[o]] || String(b[o]);
+  r.layers.push({ name: "DHCPv6", fields: [["message type", t],
+    ["transaction id", `0x${(u32(b, o) & 0xffffff).toString(16).padStart(6, "0")}`]]});
+  r.summary = `DHCPv6 ${t}`;
+  return r;
+}
+
+const ICMP4 = {0:"echo reply",3:"destination unreachable",5:"redirect",8:"echo request",11:"time exceeded"};
+function icmp4(b, o, r) {
+  r.proto = "icmp";
+  if (b.length < o + 4) { r.summary = "ICMP (truncated)"; return r; }
+  const t = b[o], c = b[o + 1];
+  const name = ICMP4[t] || `type ${t}`;
+  const f = [["type", `${name} (${t})`], ["code", String(c)]];
+  if (t === 0 || t === 8) f.push(["id", String(u16(b, o + 4))], ["sequence", String(u16(b, o + 6))]);
+  r.layers.push({ name: "ICMP", fields: f });
+  r.summary = `ICMP ${name}${t === 8 || t === 0 ? ` seq=${u16(b, o + 6)}` : ""}`;
+  return r;
+}
+
+const ICMP6 = {1:"destination unreachable",2:"packet too big",3:"time exceeded",4:"parameter problem",
+  128:"echo request",129:"echo reply",130:"MLD query",131:"MLDv1 report",132:"MLD done",
+  133:"router solicitation",134:"router advertisement",135:"neighbor solicitation",
+  136:"neighbor advertisement",137:"redirect",143:"MLDv2 report"};
+function icmp6(b, o, r) {
+  if (b.length < o + 4) { r.proto = "icmp6"; r.summary = "ICMPv6 (truncated)"; return r; }
+  const t = b[o];
+  const name = ICMP6[t] || `type ${t}`;
+  r.proto = t >= 133 && t <= 137 ? "nd" : (t >= 130 && t <= 132) || t === 143 ? "mld" : "icmp6";
+  const f = [["type", `${name} (${t})`], ["code", String(b[o + 1])]];
+  let extra = "";
+  if (t === 134 && b.length >= o + 16) {
+    const flags = b[o + 5];
+    f.push(["cur hop limit", String(b[o + 4])],
+      ["managed (M)", flags & 0x80 ? "yes" : "no"], ["other (O)", flags & 0x40 ? "yes" : "no"],
+      ["router lifetime", `${u16(b, o + 6)}s`]);
+    extra = ndOptions(b, o + 16, f);
+  } else if ((t === 135 || t === 136) && b.length >= o + 24) {
+    const target = ip6(b, o + 8);
+    f.push(["target", target]);
+    if (t === 136) {
+      const fl = b[o + 4];
+      f.push(["flags", [fl & 0x80 ? "R" : "", fl & 0x40 ? "S" : "", fl & 0x20 ? "O" : ""].filter(Boolean).join(",") || "none"]);
+    }
+    extra = ` ${target}`;
+    ndOptions(b, o + 24, f);
+  } else if (t === 133) {
+    ndOptions(b, o + 8, f);
+  } else if (t === 128 || t === 129) {
+    f.push(["id", String(u16(b, o + 4))], ["sequence", String(u16(b, o + 6))]);
+    extra = ` seq=${u16(b, o + 6)}`;
+  }
+  r.layers.push({ name: "ICMPv6", fields: f });
+  r.summary = `ICMPv6 ${name}${extra}`;
+  return r;
+}
+
+function ndOptions(b, p, f) {
+  let note = "";
+  let guard = 0;
+  while (p + 2 <= b.length && guard++ < 16) {
+    const type = b[p], len = b[p + 1] * 8;
+    if (len === 0) break;
+    if (type === 1 && len >= 8) f.push(["source link-layer", mac(b, p + 2)]);
+    else if (type === 3 && len >= 32) {
+      const prefix = `${ip6(b, p + 16)}/${b[p + 2]}`;
+      const fl = b[p + 3];
+      f.push(["prefix", `${prefix}${fl & 0x80 ? " on-link" : ""}${fl & 0x40 ? " autonomous" : ""}`],
+        ["valid / preferred", `${u32(b, p + 4)}s / ${u32(b, p + 8)}s`]);
+      note = ` prefix ${prefix}`;
+    }
+    else if (type === 5 && len >= 8) f.push(["mtu", String(u32(b, p + 4))]);
+    else if (type === 25 && len >= 24) f.push(["rdnss", ip6(b, p + 8)]);
+    p += len;
+  }
+  return note;
+}
+
+function igmp(b, o, r) {
+  r.proto = "mld";
+  const t = b[o];
+  const names = {0x11:"membership query",0x16:"v2 membership report",0x17:"leave group",0x22:"v3 membership report"};
+  const name = names[t] || `type 0x${t.toString(16)}`;
+  const f = [["type", name]];
+  if ((t === 0x16 || t === 0x17) && b.length >= o + 8) f.push(["group", ip4(b, o + 4)]);
+  r.layers.push({ name: "IGMP", fields: f });
+  r.summary = `IGMP ${name}`;
+  return r;
+}
+
+/* ---------------- state + rendering ---------------- */
+const PROTOS = ["arp","tcp","udp","dns","dhcp","icmp","icmp6","nd","mld","other"];
+const PROTO_LABEL = {arp:"ARP",tcp:"TCP",udp:"UDP",dns:"DNS",dhcp:"DHCP",icmp:"ICMP",icmp6:"ICMPv6",nd:"ND",mld:"MLD/IGMP",other:"other"};
+const enabled = Object.fromEntries(PROTOS.map(p => [p, true]));
+let packets = [];           // {meta, bytes, dis}
+let ringCap = 4096;
+let paused = false, follow = true, filterText = "";
+let lastSeq = 0, selected = null, shown = 0;
+
+const $ = id => document.getElementById(id);
+const rowsEl = $("rows"), tbl = $("tbl"), emptyEl = $("empty"), wrap = $("tablewrap");
+
+const chipsEl = $("chips");
+for (const p of PROTOS) {
+  const c = document.createElement("span");
+  c.className = "chip on"; c.textContent = PROTO_LABEL[p];
+  c.style.background = "transparent";
+  c.dataset.proto = p;
+  c.onclick = () => { enabled[p] = !enabled[p]; paint(c, p); rebuild(); };
+  chipsEl.appendChild(c); paint(c, p);
+}
+function paint(c, p) {
+  const color = getComputedStyle(document.documentElement).getPropertyValue(`--${p}`) || "#888";
+  if (enabled[p]) { c.classList.add("on"); c.style.background = color; c.style.color = "var(--bg)"; }
+  else { c.classList.remove("on"); c.style.background = "transparent"; c.style.color = "var(--dim)"; }
+}
+
+function fmtTime(sec, nsec) {
+  const d = new Date(sec * 1000);
+  const ms = String(Math.floor(nsec / 1e6)).padStart(3, "0");
+  return d.toTimeString().slice(0, 8) + "." + ms;
+}
+const DIR_GLYPH = { "in": "⇣", "out": "⇡", "bcast": "✶", "mcast": "✷", "other": "◌" };
+
+function matches(p) {
+  if (!enabled[p.dis.proto]) return false;
+  if (!filterText) return true;
+  const hay = `${p.dis.summary} ${p.dis.src} ${p.dis.dst} ${p.meta.ifname} ${p.dis.proto}`.toLowerCase();
+  return hay.includes(filterText);
+}
+
+function makeRow(p) {
+  const tr = document.createElement("tr");
+  tr.dataset.seq = p.meta.seq;
+  const color = `var(--${p.dis.proto})`;
+  tr.innerHTML =
+    `<td class="seq">${p.meta.seq}</td>` +
+    `<td class="time">${fmtTime(p.meta.ts_sec, p.meta.ts_nsec)}</td>` +
+    `<td class="iface">${p.meta.ifname}</td>` +
+    `<td class="dir dir-${p.meta.dir}" title="${p.meta.dir}">${DIR_GLYPH[p.meta.dir] || "·"}</td>` +
+    `<td><span class="badge" style="background:${color}">${PROTO_LABEL[p.dis.proto]}</span></td>` +
+    `<td class="addr" title="${p.dis.src}">${p.dis.src}</td>` +
+    `<td class="addr" title="${p.dis.dst}">${p.dis.dst}</td>` +
+    `<td class="len">${p.meta.wire_len}</td>` +
+    `<td class="summary" title="${p.dis.summary.replace(/"/g, "&quot;")}">${p.dis.summary}</td>`;
+  tr.onclick = () => select(p, tr);
+  return tr;
+}
+
+function add(meta) {
+  const bytes = hexToBytes(meta.data);
+  let dis;
+  try { dis = dissect(bytes); }
+  catch (e) { dis = { proto: "other", src: "", dst: "", summary: `undissectable (${e.message})`, layers: [] }; }
+  const p = { meta, bytes, dis };
+  packets.push(p);
+  if (packets.length > ringCap) packets.shift();
+  lastSeq = Math.max(lastSeq, meta.seq);
+  if (!paused && matches(p)) {
+    emptyEl.hidden = true; tbl.hidden = false;
+    rowsEl.appendChild(makeRow(p));
+    shown++;
+    while (rowsEl.children.length > ringCap) rowsEl.removeChild(rowsEl.firstChild);
+    if (follow) wrap.scrollTop = wrap.scrollHeight;
+    $("s-shown").textContent = shown = rowsEl.children.length;
+  }
+}
+
+function rebuild() {
+  rowsEl.textContent = "";
+  const frag = document.createDocumentFragment();
+  for (const p of packets) if (matches(p)) frag.appendChild(makeRow(p));
+  rowsEl.appendChild(frag);
+  const any = rowsEl.children.length > 0;
+  tbl.hidden = !any; emptyEl.hidden = any;
+  $("s-shown").textContent = shown = rowsEl.children.length;
+  if (follow) wrap.scrollTop = wrap.scrollHeight;
+}
+
+/* ---------------- detail pane ---------------- */
+function select(p, tr) {
+  for (const el of rowsEl.querySelectorAll("tr.sel")) el.classList.remove("sel");
+  tr.classList.add("sel");
+  selected = p;
+  $("detail").classList.add("open");
+  $("dsummary").textContent = `#${p.meta.seq} · ${p.dis.summary}`;
+  const layers = $("layers");
+  layers.textContent = "";
+  const metaLayer = { name: "Capture", fields: [
+    ["time", fmtTime(p.meta.ts_sec, p.meta.ts_nsec)], ["interface", p.meta.ifname],
+    ["direction", p.meta.dir], ["wire length", `${p.meta.wire_len} bytes` +
+      (p.meta.wire_len > p.bytes.length ? ` (captured ${p.bytes.length})` : "")]]};
+  for (const layer of [metaLayer, ...p.dis.layers]) {
+    const d = document.createElement("details");
+    d.className = "layer"; d.open = true;
+    const s = document.createElement("summary"); s.textContent = layer.name; d.appendChild(s);
+    const g = document.createElement("div"); g.className = "fields";
+    for (const [k, v] of layer.fields) {
+      const ke = document.createElement("span"); ke.className = "k"; ke.textContent = k;
+      const ve = document.createElement("span"); ve.className = "v"; ve.textContent = v;
+      g.appendChild(ke); g.appendChild(ve);
+    }
+    d.appendChild(g); layers.appendChild(d);
+  }
+  const hex = $("hex");
+  let out = "";
+  for (let o = 0; o < p.bytes.length; o += 16) {
+    const chunk = [...p.bytes.slice(o, o + 16)];
+    const hx = chunk.map((x, i) => x.toString(16).padStart(2, "0") + (i === 7 ? " " : "")).join(" ");
+    const asc = chunk.map(x => x >= 32 && x < 127 ? String.fromCharCode(x) : "·").join("");
+    out += `<span class="off">${o.toString(16).padStart(4, "0")}</span>  ${hx.padEnd(49)} <span class="asc">${asc.replace(/</g, "&lt;")}</span>\n`;
+  }
+  hex.innerHTML = out;
+}
+$("dclose").onclick = () => { $("detail").classList.remove("open");
+  for (const el of rowsEl.querySelectorAll("tr.sel")) el.classList.remove("sel"); };
+
+/* ---------------- controls ---------------- */
+$("filter").oninput = e => { filterText = e.target.value.toLowerCase(); rebuild(); };
+$("follow").onclick = e => { follow = !follow; e.target.classList.toggle("on", follow);
+  if (follow) wrap.scrollTop = wrap.scrollHeight; };
+$("pause").onclick = e => { paused = !paused; e.target.classList.toggle("paused", paused);
+  e.target.textContent = paused ? "resume" : "pause"; if (!paused) rebuild(); };
+$("clear").onclick = () => { packets = []; rebuild(); };
+wrap.onscroll = () => {
+  const atBottom = wrap.scrollTop + wrap.clientHeight >= wrap.scrollHeight - 40;
+  if (!atBottom && follow) { follow = false; $("follow").classList.remove("on"); }
+};
+
+/* ---------------- data feed ---------------- */
+function setStats(s) {
+  $("s-cap").textContent = s.captured;
+  const d = $("s-drop"); d.textContent = s.dropped; d.classList.toggle("nonzero", s.dropped > 0);
+  $("s-sup").textContent = s.suppressed;
+  $("f-daemon").textContent = `${s.daemon} · ring ${s.ring_capacity} · up ${s.uptime_s}s`;
+  ringCap = s.ring_capacity;
+}
+async function backfill() {
+  try {
+    const res = await fetch(`/api/packets?since=${lastSeq}`);
+    for (const meta of await res.json()) add(meta);
+    const st = await fetch("/api/status");
+    setStats(await st.json());
+  } catch (e) { /* stream reconnect will retry */ }
+}
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onopen = () => { $("dot").className = "dot live"; backfill(); };
+  es.onerror = () => { $("dot").className = "dot stale"; };
+  es.addEventListener("packet", ev => add(JSON.parse(ev.data)));
+  es.addEventListener("stats", ev => setStats(JSON.parse(ev.data)));
+}
+connect();
+</script>
+</body>
+</html>

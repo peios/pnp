@@ -1,0 +1,27 @@
+out_dir = "out"
+
+[build]
+command = """
+set -eu
+SRC="$(pwd)"
+
+cargo build --release --locked --bin pnpd --target-dir "$PEKIT_OUT/target"
+
+mkdir -p "$PEKIT_OUT/usr/sbin"
+install -m 0755 "$PEKIT_OUT/target/release/pnpd" "$PEKIT_OUT/usr/sbin/pnpd"
+
+# Seeds are offered, not applied: an image opts in with [registry] autoapply.
+mkdir -p "$PEKIT_OUT/usr/share/regim"
+install -m 0644 "$SRC/registry.d/pnpd-service.reg" "$PEKIT_OUT/usr/share/regim/pnpd-service.reg"
+"""
+
+[build.dependencies.peipkg]
+cargo = "*"
+rust = "*"
+gcc = "*"
+
+[test]
+command = "cargo test --workspace"
+
+[clean]
+command = "cargo clean"

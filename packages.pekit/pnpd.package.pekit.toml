@@ -1,0 +1,6 @@
+[package]
+description = "Peios Network Policy daemon - wire tap and the PNP viewer web UI"
+
+[files]
+":usr/sbin/pnpd" = "usr/sbin/pnpd"
+":usr/share/regim/pnpd-service.reg" = "usr/share/regim/pnpd-service.reg"

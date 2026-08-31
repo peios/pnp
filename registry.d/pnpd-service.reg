@@ -1,0 +1,33 @@
+{
+  "_comment": [
+    "pnpd: the Peios Network Policy daemon — at this stage, the PNP viewer's",
+    "wire tap and web server (PEI-598/PEI-599). Serves the packet viewer on",
+    "TCP 8081.",
+    "",
+    "Identity is SYSTEM, deliberately: this deviates from the atriumd rule",
+    "that nothing listening on a port runs as SYSTEM. jack's explicit call",
+    "(PEI-599, 2026-08-31) for the PNP development phase — the daemon needs",
+    "raw packet capture anyway and predates any user; revisit the split",
+    "(capture child vs server child) when PNP approaches shipping.",
+    "",
+    "Readiness 0 = notify: pnpd sends READY=1 once the tap and listener are",
+    "up. RestartPolicy 2 = always."
+  ],
+  "keys": [
+    { "path": "Machine\\System" },
+    { "path": "Machine\\System\\Services" },
+    {
+      "path": "Machine\\System\\Services\\pnpd",
+      "values": [
+        { "name": "ImagePath", "type": "sz", "data": "/usr/sbin/pnpd" },
+        { "name": "Triggers", "type": "multi", "data": ["boot"] },
+        { "name": "Identity", "type": "sz", "data": "SYSTEM" },
+        { "name": "Readiness", "type": "dword", "data": 0 },
+        { "name": "RestartPolicy", "type": "dword", "data": 2 },
+        { "name": "ErrorControl", "type": "dword", "data": 0 },
+        { "name": "DisplayName", "type": "sz", "data": "PNP viewer" },
+        { "name": "Description", "type": "sz", "data": "Network observation and the PNP viewer: wire tap and web UI on port 8081" }
+      ]
+    }
+  ]
+}
