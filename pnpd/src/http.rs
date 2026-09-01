@@ -202,21 +202,30 @@ fn stream_events(mut stream: TcpStream, server: &Server) -> std::io::Result<()> 
     stream.set_read_timeout(None)?;
     let mut last_stats = std::time::Instant::now();
     loop {
-        let mut idle = true;
         loop {
             match verdicts.try_recv() {
                 Ok(ev) => {
-                    idle = false;
                     write!(stream, "event: verdict\ndata: {}\n\n", verdict_json(&ev))?;
                 }
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return Ok(()),
             }
         }
+        // Block briefly for the first packet, then drain the rest of the
+        // queue — one packet per tick throttles a busy wire behind the
+        // timeout and lets verdicts race far ahead of their packets.
         match packets.recv_timeout(Duration::from_millis(150)) {
             Ok(packet) => {
-                idle = false;
                 write!(stream, "event: packet\ndata: {}\n\n", packet_json(&packet))?;
+                loop {
+                    match packets.try_recv() {
+                        Ok(p) => {
+                            write!(stream, "event: packet\ndata: {}\n\n", packet_json(&p))?;
+                        }
+                        Err(TryRecvError::Empty) => break,
+                        Err(TryRecvError::Disconnected) => return Ok(()),
+                    }
+                }
             }
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => return Ok(()),
@@ -226,11 +235,7 @@ fn stream_events(mut stream: TcpStream, server: &Server) -> std::io::Result<()> 
             write!(stream, "event: engine\ndata: {}\n\n", engine_json(server))?;
             last_stats = std::time::Instant::now();
         }
-        if !idle {
-            stream.flush()?;
-        } else {
-            stream.flush()?;
-        }
+        stream.flush()?;
     }
 }
 
