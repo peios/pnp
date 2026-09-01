@@ -187,6 +187,7 @@
     <span>pass <b id="e-pass">0</b></span>
     <span>drop <b id="e-drop">0</b></span>
     <span>reject <b id="e-rej">0</b></span>
+    <span title="verdicts about pnpd's own HTTP flow, hidden to break the observer feedback loop — counted, never vanished">own hidden <b id="e-own">0</b></span>
   </div>
   <div class="controls">
     <input type="search" id="filter" placeholder="filter: address, name, text…">
@@ -809,6 +810,7 @@ function setEngine(e) {
   else { state.textContent = "engine: permissive (gen 0)"; state.className = "permissive-flag"; }
   $("e-gen").textContent = e.generation;
   $("e-judged").textContent = e.judged;
+  $("e-own").textContent = e.own_verdicts_hidden || 0;
   $("e-pass").textContent = e.verdict_pass;
   $("e-drop").textContent = e.verdict_drop;
   $("e-rej").textContent = e.verdict_reject;

@@ -103,23 +103,36 @@ struct Inner {
     status: PnpStatus,
     /// Whether the device is currently open and streaming.
     connected: bool,
+    /// Own-flow verdicts hidden from the ring (counted, per the honesty
+    /// rule — same treatment the tap gives its own packets).
+    own_hidden: u64,
 }
 
 /// Shared engine view: the verdict ring and the latest status snapshot.
 pub struct Engine {
     inner: Mutex<Inner>,
+    /// The port pnpd serves on: verdicts about our own HTTP flow feed
+    /// back (each SSE verdict event is itself judged traffic), so they
+    /// are hidden from the ring and counted instead.
+    own_port: u16,
 }
 
 impl Engine {
-    pub fn new() -> Arc<Engine> {
+    pub fn new(own_port: u16) -> Arc<Engine> {
         Arc::new(Engine {
             inner: Mutex::new(Inner {
                 events: VecDeque::with_capacity(RING),
                 subscribers: Vec::new(),
                 status: PnpStatus::default(),
                 connected: false,
+                own_hidden: 0,
             }),
+            own_port,
         })
+    }
+
+    pub fn own_hidden(&self) -> u64 {
+        self.inner.lock().unwrap().own_hidden
     }
 
     pub fn status(&self) -> (PnpStatus, bool) {
@@ -146,6 +159,15 @@ impl Engine {
 
     fn push(&self, ev: PnpEvent) {
         let mut inner = self.inner.lock().unwrap();
+        // The observer must not observe itself into a feedback loop:
+        // sending a verdict event over SSE is itself judged TCP traffic.
+        if ev.protocol == 6
+            && (ev.addr_family == 4 || ev.addr_family == 6)
+            && (ev.src_port == self.own_port || ev.dst_port == self.own_port)
+        {
+            inner.own_hidden += 1;
+            return;
+        }
         if inner.events.len() == RING {
             inner.events.pop_front();
         }

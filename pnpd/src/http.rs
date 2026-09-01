@@ -249,6 +249,7 @@ fn engine_json(server: &Server) -> String {
     let (s, connected) = server.engine.status();
     Obj::new()
         .num("connected", connected as i64)
+        .num("own_verdicts_hidden", server.engine.own_hidden() as i128)
         .num("abi", s.abi as i128)
         .num("generation", s.generation as i128)
         .num("enforcing", s.enforcing as i128)
