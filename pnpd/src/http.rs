@@ -95,6 +95,10 @@ fn handle(stream: TcpStream, server: &Server) -> std::io::Result<()> {
             body.push(']');
             respond(stream, "200 OK", "application/json", body.as_bytes())
         }
+        "/api/counters" => {
+            let body = counters_json(server);
+            respond(stream, "200 OK", "application/json", body.as_bytes())
+        }
         "/api/policy" => {
             let body = policy::read_policy();
             respond(stream, "200 OK", "application/json", body.as_bytes())
@@ -278,6 +282,76 @@ fn engine_json(server: &Server) -> String {
         .num("fx_prompts", s.fx_prompts as i128)
         .num("last_ingest_error", s.last_ingest_error as i128)
         .num("last_ingest_t_ns", s.last_ingest_t_ns as i128)
+        .num("tag_writes", s.tag_writes as i128)
+        .num("tag_untracked", s.tag_untracked as i128)
+        .num("tag_refused", s.tag_refused as i128)
+        .num("count_writes", s.count_writes as i128)
+        .num("count_key_absent", s.count_key_absent as i128)
+        .num("count_refused", s.count_refused as i128)
+        .num("reports_emitted", s.reports_emitted as i128)
+        .num("counter_cells", s.counter_cells as i128)
+        .num("reporting_level", s.reporting_level as i128)
+        .finish()
+}
+
+fn keyspec_json(keyspec: u8) -> String {
+    let mut names = Vec::new();
+    if keyspec & engine::KEY_SRC_ADDR != 0 {
+        names.push("\"SrcAddr\"");
+    }
+    if keyspec & engine::KEY_DST_ADDR != 0 {
+        names.push("\"DstAddr\"");
+    }
+    if keyspec & engine::KEY_INTERFACE != 0 {
+        names.push("\"Interface\"");
+    }
+    format!("[{}]", names.join(","))
+}
+
+/// The counter store, every cell: `{"connected":1,"total_cells":N,
+/// "records":[{name,keyspec,family,ifindex,src,dst,total,last_secs,
+/// windows:[{secs,value}]}]}`.
+fn counters_json(server: &Server) -> String {
+    let dump = match server.engine.counters() {
+        Ok(d) => d,
+        Err(err) => {
+            return Obj::new()
+                .num("connected", 0)
+                .str("error", &err)
+                .finish()
+        }
+    };
+    let mut records = Vec::with_capacity(dump.records.len());
+    for r in &dump.records {
+        let name_end = r.name.iter().position(|&b| b == 0).unwrap_or(r.name.len());
+        let name = String::from_utf8_lossy(&r.name[..name_end]);
+        let mut windows = Vec::new();
+        for w in 0..(r.n_windows as usize).min(8) {
+            windows.push(
+                Obj::new()
+                    .num("secs", r.window_secs[w] as i64)
+                    .num("value", r.window_value[w] as i128)
+                    .finish(),
+            );
+        }
+        records.push(
+            Obj::new()
+                .str("name", &name)
+                .raw("keyspec", &keyspec_json(r.keyspec))
+                .num("family", r.family as i64)
+                .num("ifindex", r.ifindex as i64)
+                .str("src", &fmt_addr(r.family, &r.src_addr))
+                .str("dst", &fmt_addr(r.family, &r.dst_addr))
+                .num("total", r.total as i128)
+                .num("last_secs", r.last_secs as i128)
+                .raw("windows", &format!("[{}]", windows.join(",")))
+                .finish(),
+        );
+    }
+    Obj::new()
+        .num("connected", 1)
+        .num("total_cells", dump.total_cells as i64)
+        .raw("records", &format!("[{}]", records.join(",")))
         .finish()
 }
 
@@ -322,6 +396,14 @@ fn verdict_json(ev: &PnpEvent) -> String {
         .str("seat", seat)
         .str("layer", layer)
         .str("verdict", verdict)
+        .str(
+            "reject_kind",
+            if ev.verdict == engine::VERDICT_REJECT {
+                if ev.reject_kind == 1 { "Prohibited" } else { "Refused" }
+            } else {
+                ""
+            },
+        )
         .num("backstop", (ev.flags & engine::EV_F_BACKSTOP != 0) as i64)
         .num("fail_closed", (ev.flags & engine::EV_F_FAIL_CLOSED != 0) as i64)
         .num(

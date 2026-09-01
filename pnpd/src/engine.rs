@@ -45,7 +45,8 @@ pub struct PnpEvent {
     pub src_port: u16,
     pub dst_port: u16,
     pub ether_type: u16,
-    pub _pad0: u16,
+    pub reject_kind: u8,
+    pub _pad0: u8,
     pub src_addr: [u8; 16],
     pub dst_addr: [u8; 16],
     pub length: u32,
@@ -83,16 +84,80 @@ pub struct PnpStatus {
     pub fx_prompts: u64,
     pub last_ingest_error: u64,
     pub last_ingest_t_ns: u64,
-    pub _reserved: [u64; 5],
+    pub tag_writes: u64,
+    pub tag_untracked: u64,
+    pub tag_refused: u64,
+    pub count_writes: u64,
+    pub count_key_absent: u64,
+    pub count_refused: u64,
+    pub reports_emitted: u64,
+    pub counter_cells: u64,
+    pub reporting_level: u64,
+    pub _reserved: [u64; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<PnpStatus>() == 224);
+const _: () = assert!(std::mem::size_of::<PnpStatus>() == 288);
+
+/// Mirror of `struct peios_pnp_counter_rec` (pkm/uapi/pkm/pnp.h).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PnpCounterRec {
+    pub name: [u8; 64],
+    pub hash: u64,
+    pub keyspec: u8,
+    pub family: u8,
+    pub _pad0: [u8; 2],
+    pub ifindex: i32,
+    pub src_addr: [u8; 16],
+    pub dst_addr: [u8; 16],
+    pub total: u64,
+    pub last_secs: u64,
+    pub n_windows: u32,
+    pub _pad1: u32,
+    pub window_secs: [u32; 8],
+    pub window_value: [u64; 8],
+}
+
+const _: () = assert!(std::mem::size_of::<PnpCounterRec>() == 232);
+
+/// Mirror of `struct peios_pnp_counters_query`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PnpCountersQuery {
+    pub buf: u64,
+    pub buf_len: u32,
+    pub count: u32,
+    pub total: u32,
+    pub _pad0: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<PnpCountersQuery>() == 24);
+
+pub const KEY_SRC_ADDR: u8 = 0x01;
+pub const KEY_DST_ADDR: u8 = 0x02;
+pub const KEY_INTERFACE: u8 = 0x04;
+
+/// One dump's worth of counter cells plus how many exist.
+pub struct CountersDump {
+    pub records: Vec<PnpCounterRec>,
+    pub total_cells: u32,
+}
 
 /// _IOR('N', 1, struct peios_pnp_status): dir=2, size, type 'N', nr 1.
 const IOC_STATUS: libc::c_ulong = (2u64 << 30
     | (std::mem::size_of::<PnpStatus>() as u64) << 16
     | (b'N' as u64) << 8
     | 1) as libc::c_ulong;
+/// _IOWR('N', 2, struct peios_pnp_counters_query): dir=3.
+const IOC_COUNTERS: libc::c_ulong = (3u64 << 30
+    | (std::mem::size_of::<PnpCountersQuery>() as u64) << 16
+    | (b'N' as u64) << 8
+    | 2) as libc::c_ulong;
+/// The kernel ABI this daemon speaks (machinery slice).
+const ABI: u64 = 2;
+/// Most cells one dump asks for (the kernel caps tables at 4096 keys;
+/// the viewer is a debugging surface, not a census).
+const COUNTERS_DUMP_MAX: usize = 4096;
 
 const DEVICE: &str = "/dev/peios-pnp";
 const RING: usize = 8192;
@@ -106,6 +171,9 @@ struct Inner {
     /// Own-flow verdicts hidden from the ring (counted, per the honesty
     /// rule — same treatment the tap gives its own packets).
     own_hidden: u64,
+    /// A dup of the open device fd for ioctls from the HTTP threads (dup
+    /// does not re-open, so the single-reader gate is untouched).
+    dev_fd: Option<i32>,
 }
 
 /// Shared engine view: the verdict ring and the latest status snapshot.
@@ -126,6 +194,7 @@ impl Engine {
                 status: PnpStatus::default(),
                 connected: false,
                 own_hidden: 0,
+                dev_fd: None,
             }),
             own_port,
         })
@@ -183,6 +252,40 @@ impl Engine {
         inner.status = status;
         inner.connected = connected;
     }
+
+    fn set_dev_fd(&self, fd: Option<i32>) {
+        let mut inner = self.inner.lock().unwrap();
+        if let Some(old) = inner.dev_fd.take() {
+            unsafe { libc::close(old) };
+        }
+        inner.dev_fd = fd;
+    }
+
+    /// Dumps the counter store (every cell of every materialized table).
+    pub fn counters(&self) -> Result<CountersDump, String> {
+        let fd = self
+            .inner
+            .lock()
+            .unwrap()
+            .dev_fd
+            .ok_or_else(|| "engine not connected".to_string())?;
+        let mut records: Vec<PnpCounterRec> =
+            vec![unsafe { std::mem::zeroed() }; COUNTERS_DUMP_MAX];
+        let mut query = PnpCountersQuery {
+            buf: records.as_mut_ptr() as u64,
+            buf_len: (records.len() * std::mem::size_of::<PnpCounterRec>()) as u32,
+            ..Default::default()
+        };
+        let rc = unsafe { libc::ioctl(fd, IOC_COUNTERS, &mut query as *mut PnpCountersQuery) };
+        if rc != 0 {
+            return Err(format!("COUNTERS ioctl: {}", std::io::Error::last_os_error()));
+        }
+        records.truncate(query.count as usize);
+        Ok(CountersDump {
+            records,
+            total_cells: query.total,
+        })
+    }
 }
 
 /// Runs forever: opens the device (retrying — the daemon may start before
@@ -206,8 +309,12 @@ pub fn run(engine: Arc<Engine>) {
         };
 
         match refresh_status(&file, &engine) {
-            Ok(abi) if abi == 1 => {
-                log::info("verdict stream: connected to /dev/peios-pnp (abi 1)")
+            Ok(abi) if abi == ABI => {
+                log::info(&format!(
+                    "verdict stream: connected to /dev/peios-pnp (abi {ABI})"
+                ));
+                let dup = unsafe { libc::dup(file.as_raw_fd()) };
+                engine.set_dev_fd(if dup >= 0 { Some(dup) } else { None });
             }
             Ok(abi) => {
                 log::error(&format!(
@@ -226,6 +333,7 @@ pub fn run(engine: Arc<Engine>) {
         if let Err(err) = stream(&file, &engine) {
             log::error(&format!("verdict stream: {err}; reconnecting"));
         }
+        engine.set_dev_fd(None);
         engine.set_status(engine.status().0, false);
         std::thread::sleep(Duration::from_secs(2));
     }

@@ -139,8 +139,12 @@
   tr.vrow td { color: var(--dim); font-style: italic; background: #f7768e0d; }
 
   /* ---- policy panel ---- */
-  #policy { flex: 1; overflow-y: auto; padding: 14px 18px; display: none; }
-  #policy.open { display: block; }
+  #policy, #counters { flex: 1; overflow-y: auto; padding: 14px 18px; display: none; }
+  #policy.open, #counters.open { display: block; }
+  #counters table { border-collapse: collapse; font-size: 12px; }
+  #counters th, #counters td { padding: 3px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  #counters td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  #counters .stream { font-weight: 600; }
   main.hiddenview { display: none; }
   .layer-section h2 { font-size: 14px; margin: 14px 0 8px; color: var(--text); }
   .layer-section h2 .lnote { color: var(--faint); font-weight: 400; font-size: 11.5px; margin-left: 8px; }
@@ -173,6 +177,7 @@
   <div class="tabs">
     <button id="tab-wire" class="on">wire</button>
     <button id="tab-policy">policy</button>
+    <button id="tab-counters">counters</button>
   </div>
   <div class="stats">
     <span>captured <b id="s-cap">0</b></span>
@@ -188,6 +193,11 @@
     <span>drop <b id="e-drop">0</b></span>
     <span>reject <b id="e-rej">0</b></span>
     <span title="verdicts about pnpd's own HTTP flow, hidden to break the observer feedback loop — counted, never vanished">own hidden <b id="e-own">0</b></span>
+    <span id="e-tags-wrap">tags <b id="e-tags">0</b></span>
+    <span id="e-counts-wrap">counts <b id="e-counts">0</b></span>
+    <span id="e-reports-wrap">reports <b id="e-reports">0</b></span>
+    <span title="live counter cells across every materialized table">cells <b id="e-cells">0</b></span>
+    <span title="CurrentReportingLevel of the active generation (REPORT(n) fires when n >= this; absent = 1)">report level <b id="e-rl">–</b></span>
   </div>
   <div class="controls">
     <input type="search" id="filter" placeholder="filter: address, name, text…">
@@ -223,6 +233,7 @@
   </div>
 </main>
 <div id="policy"></div>
+<div id="counters"></div>
 <footer>
   <span id="f-daemon"></span>
   <span>the tap sees inbound before any filtering and outbound as handed to the driver — verdicts come from the engine's own event stream; a verdict row with no packet is a packet the tap could never see (dropped before transmit)</span>
@@ -617,7 +628,9 @@ function makeRow(p) {
 function verdictBadge(v) {
   if (!v) return "";
   const cls = `vbadge v-${v.verdict}` + (v.backstop ? " v-backstop" : "");
-  const label = v.verdict.toUpperCase() + (v.backstop ? "·backstop" : "");
+  const label = v.verdict.toUpperCase() +
+    (v.verdict === "reject" && v.reject_kind ? `·${v.reject_kind}` : "") +
+    (v.backstop ? "·backstop" : "");
   const title = `by ${v.by} — ${v.layer} @ ${v.seat}` +
     (v.fail_closed ? " (fail-closed)" : "") +
     (v.reject_degraded ? " (reject degraded to drop)" : "");
@@ -868,6 +881,15 @@ function setEngine(e) {
   $("e-pass").textContent = e.verdict_pass;
   $("e-drop").textContent = e.verdict_drop;
   $("e-rej").textContent = e.verdict_reject;
+  // The stores confess what they refused; the header says it in the title.
+  $("e-tags").textContent = e.tag_writes || 0;
+  $("e-tags-wrap").title = `tag ops applied to flows — ${e.tag_untracked || 0} no-op on untracked packets, ${e.tag_refused || 0} refused (per-flow tripwire / allocation)`;
+  $("e-counts").textContent = e.count_writes || 0;
+  $("e-counts-wrap").title = `stream emissions applied — ${e.count_key_absent || 0} no-op (packet lacked the view's key fact), ${e.count_refused || 0} refused (table at its key cap / allocation)`;
+  $("e-reports").textContent = e.reports_emitted || 0;
+  $("e-reports-wrap").title = `KMES network-report events emitted (${e.fx_reports || 0} REPORT effects yielded)`;
+  $("e-cells").textContent = e.counter_cells || 0;
+  $("e-rl").textContent = e.reporting_level == null ? "–" : e.reporting_level;
   const warn = $("ingest-warn");
   if (e.last_ingest_error && Number(e.last_ingest_error) !== 0) {
     warn.style.display = "block";
@@ -879,17 +901,88 @@ function setEngine(e) {
 
 /* ---------------- policy panel ---------------- */
 const policyEl = $("policy");
+const countersEl = $("counters");
 let policyOpen = false;
+let countersTimer = null;
 
-$("tab-wire").onclick = () => switchTab(false);
-$("tab-policy").onclick = () => switchTab(true);
-function switchTab(pol) {
-  policyOpen = pol;
-  document.querySelector("main").classList.toggle("hiddenview", pol);
-  policyEl.classList.toggle("open", pol);
-  $("tab-wire").classList.toggle("on", !pol);
-  $("tab-policy").classList.toggle("on", pol);
-  if (pol) loadPolicy();
+$("tab-wire").onclick = () => switchTab("wire");
+$("tab-policy").onclick = () => switchTab("policy");
+$("tab-counters").onclick = () => switchTab("counters");
+function switchTab(which) {
+  policyOpen = which === "policy";
+  document.querySelector("main").classList.toggle("hiddenview", which !== "wire");
+  policyEl.classList.toggle("open", which === "policy");
+  countersEl.classList.toggle("open", which === "counters");
+  for (const t of ["wire", "policy", "counters"]) $(`tab-${t}`).classList.toggle("on", which === t);
+  if (policyOpen) loadPolicy();
+  clearInterval(countersTimer); countersTimer = null;
+  if (which === "counters") { loadCounters(); countersTimer = setInterval(loadCounters, 2000); }
+}
+
+/* ---------------- counters panel ---------------- */
+/* The counter store, every cell of every materialized table, refreshed
+   while the tab is open. Tables exist only for (stream, keyspec) pairs
+   some rule views; a stream nobody views has no cells to show. */
+async function loadCounters() {
+  try {
+    const res = await fetch("/api/counters");
+    renderCounters(await res.json());
+  } catch (e) { countersEl.textContent = `cannot load counters: ${e.message}`; }
+}
+
+function fmtAge(lastSecs) {
+  if (!lastSecs) return "";
+  const age = Math.max(0, Math.floor(Date.now() / 1000) - Number(lastSecs));
+  return age < 60 ? `${age}s ago` : age < 3600 ? `${Math.floor(age / 60)}m ago` : `${Math.floor(age / 3600)}h ago`;
+}
+
+function fmtWindow(secs) {
+  return secs % 86400 === 0 ? `${secs / 86400}d` : secs % 3600 === 0 ? `${secs / 3600}h` : secs % 60 === 0 ? `${secs / 60}m` : `${secs}s`;
+}
+
+function renderCounters(c) {
+  countersEl.textContent = "";
+  const intro = document.createElement("div");
+  intro.style.cssText = "color:var(--dim);font-size:12px;margin-bottom:8px";
+  if (!c.connected) { intro.textContent = `engine not connected${c.error ? ` (${c.error})` : ""}`; countersEl.appendChild(intro); return; }
+  intro.textContent = c.records.length
+    ? `${c.total_cells} cell${c.total_cells === 1 ? "" : "s"} across the materialized tables — COUNT(name) emits into a stream; every Counter.name(window, key) a rule reads is a table here. Windows are 8-bucket sliding approximations; totals are cumulative.`
+    : "No counter cells yet. A cell appears when a COUNT lands on a stream some rule views (Counter.<name>(...) in a condition materializes the table).";
+  countersEl.appendChild(intro);
+  if (!c.records.length) return;
+  // Group by (stream, keyspec) so each table reads as one block.
+  const groups = new Map();
+  for (const r of c.records) {
+    const k = `${r.name}|${r.keyspec.join("+")}`;
+    if (!groups.has(k)) groups.set(k, { name: r.name, keyspec: r.keyspec, rows: [] });
+    groups.get(k).rows.push(r);
+  }
+  for (const g of groups.values()) {
+    const h = document.createElement("div");
+    h.className = "stream";
+    h.style.cssText = "margin:10px 0 4px";
+    h.textContent = `${g.name}` + (g.keyspec.length ? ` keyed by ${g.keyspec.join("+")}` : " (global)");
+    countersEl.appendChild(h);
+    const windows = g.rows[0].windows.map(w => w.secs);
+    const tbl = document.createElement("table");
+    const head = ["key", ...windows.map(fmtWindow), "total", "last write"];
+    tbl.innerHTML = `<thead><tr>${head.map(x => `<th>${x}</th>`).join("")}</tr></thead>`;
+    const body = document.createElement("tbody");
+    g.rows.sort((a, b) => Number(b.total) - Number(a.total));
+    for (const r of g.rows) {
+      const key = [];
+      if (g.keyspec.includes("SrcAddr")) key.push(`src ${r.src}`);
+      if (g.keyspec.includes("DstAddr")) key.push(`dst ${r.dst}`);
+      if (g.keyspec.includes("Interface")) key.push(ifNames.get(r.ifindex) || `if${r.ifindex}`);
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${key.join(" · ") || "—"}</td>` +
+        r.windows.map(w => `<td class="n">${w.value}</td>`).join("") +
+        `<td class="n">${r.total}</td><td>${fmtAge(r.last_secs)}</td>`;
+      body.appendChild(tr);
+    }
+    tbl.appendChild(body);
+    countersEl.appendChild(tbl);
+  }
 }
 
 async function loadPolicy() {
