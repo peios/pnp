@@ -27,7 +27,7 @@ fn decode_value(ty: ValueType, data: &[u8]) -> (String, String) {
         ValueType::SZ | ValueType::EXPAND_SZ => {
             let end = data.iter().position(|&b| b == 0).unwrap_or(data.len());
             let s = String::from_utf8_lossy(&data[..end]);
-            ("sz".into(), format!("\"{}\"", json::escape(&s)))
+            ("sz".into(), json::escape(&s))
         }
         ValueType::DWORD => {
             if data.len() == 4 {
@@ -57,21 +57,17 @@ fn decode_value(ty: ValueType, data: &[u8]) -> (String, String) {
                     out.push(',');
                 }
                 first = false;
-                let _ = write!(
-                    out,
-                    "\"{}\"",
-                    json::escape(&String::from_utf8_lossy(part))
-                );
+                out.push_str(&json::escape(&String::from_utf8_lossy(part)));
             }
             out.push(']');
             ("multi".into(), out)
         }
-        other => (format!("type-{}", other.0), format!("\"{}\"", json::hex(data))),
+        other => (format!("type-{}", other.0), json::escape(&json::hex(data))),
     }
 }
 
 fn rule_to_json(key: &Key, name: &str, depth: usize, out: &mut String) -> peios::Result<()> {
-    let _ = write!(out, "{{\"name\":\"{}\",\"values\":{{", json::escape(name));
+    let _ = write!(out, "{{\"name\":{},\"values\":{{", json::escape(name));
     let mut first = true;
     for record in key.query_values_batch(None)? {
         let vname = String::from_utf8_lossy(&record.name).into_owned();
@@ -82,7 +78,7 @@ fn rule_to_json(key: &Key, name: &str, depth: usize, out: &mut String) -> peios:
         first = false;
         let _ = write!(
             out,
-            "\"{}\":{{\"kind\":\"{}\",\"value\":{}}}",
+            "{}:{{\"kind\":\"{}\",\"value\":{}}}",
             json::escape(&vname),
             kind,
             value
@@ -117,9 +113,9 @@ pub fn read_policy() -> String {
     let root = match open_rules_root(KeyAccess::QUERY_VALUE | KeyAccess::ENUMERATE_SUB_KEYS) {
         Ok(k) => k,
         Err(err) => {
-            let mut out = String::from("{\"present\":false,\"layers\":{},\"error\":\"");
-            let _ = write!(out, "{}", json::escape(&err.to_string()));
-            out.push_str("\"}");
+            let mut out = String::from("{\"present\":false,\"layers\":{},\"error\":");
+            out.push_str(&json::escape(&err.to_string()));
+            out.push('}');
             return out;
         }
     };
@@ -140,7 +136,7 @@ pub fn read_policy() -> String {
             out.push(',');
         }
         first_layer = false;
-        let _ = write!(out, "\"{}\":[", json::escape(&layer_name));
+        let _ = write!(out, "{}:[", json::escape(&layer_name));
         let mut first_rule = true;
         for rule in layer.subkeys(None) {
             let Ok(rule) = rule else { continue };
@@ -163,7 +159,7 @@ pub fn read_policy() -> String {
             } else {
                 let _ = write!(
                     out,
-                    "{{\"name\":\"{}\",\"values\":{{}},\"children\":[],\"error\":true}}",
+                    "{{\"name\":{},\"values\":{{}},\"children\":[],\"error\":true}}",
                     json::escape(&rule_name)
                 );
             }
