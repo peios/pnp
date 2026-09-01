@@ -740,9 +740,26 @@ function pktKey(b, dir) {
   return `${d}|0|${et}`;
 }
 
+/* The engine spells v6 addresses as eight uncompressed groups; the tap's
+   ip6() compresses with `::`. Normalise to the compressed form so the two
+   key-makers agree (found live: every v6 verdict orphaned). */
+function canon6(s) {
+  const g = s.split(":").map(x => parseInt(x, 16) || 0);
+  if (g.length !== 8) return s;
+  let bs = -1, bl = 0, cs = -1, cl = 0;
+  for (let i = 0; i < 8; i++) {
+    if (g[i] === 0) { if (cs < 0) cs = i; cl++; if (cl > bl) { bl = cl; bs = cs; } }
+    else { cs = -1; cl = 0; }
+  }
+  if (bl < 2) return g.map(x => x.toString(16)).join(":");
+  return `${g.slice(0, bs).map(x => x.toString(16)).join(":")}::${g.slice(bs + bl).map(x => x.toString(16)).join(":")}`;
+}
+
 function verdictKey(v) {
-  if (v.family === 4 || v.family === 6)
-    return `${v.dir}|${v.family}|${v.protocol}|${v.src}|${v.src_port}|${v.dst}|${v.dst_port}`;
+  if (v.family === 4)
+    return `${v.dir}|4|${v.protocol}|${v.src}|${v.src_port}|${v.dst}|${v.dst_port}`;
+  if (v.family === 6)
+    return `${v.dir}|6|${v.protocol}|${canon6(v.src)}|${v.src_port}|${canon6(v.dst)}|${v.dst_port}`;
   return `${v.dir}|0|${v.ether_type}`;
 }
 
