@@ -1,9 +1,10 @@
 [package]
 name = "pnpd"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Peios Network Policy daemon: network observation and the PNP viewer"
+description = "Peios Network Policy daemon: observation, the verdict stream, and policy authoring"
 license = "MIT"
 
 [dependencies]
-libc = "0.2"
+libc = { workspace = true }
+peios = { workspace = true }

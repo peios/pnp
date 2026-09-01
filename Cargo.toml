@@ -1,3 +1,9 @@
 [workspace]
 resolver = "2"
 members = ["pnpd"]
+
+[workspace.dependencies]
+libc = "0.2"
+# The Peios userspace API — the safe wrapper over libpeios' C ABI, path-dep'd
+# as a sibling checkout like every Peios daemon (netd, resolvd, atriumd).
+peios = { path = "../peios-rs/peios" }

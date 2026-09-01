@@ -7,9 +7,11 @@
 //! no audience — this daemon predates any user.
 
 mod capture;
+mod engine;
 mod http;
 mod json;
 mod log;
+mod policy;
 mod ring;
 
 use std::net::TcpListener;
@@ -52,6 +54,13 @@ fn main() {
     };
     std::thread::spawn(move || cap.run());
 
+    // The kernel verdict stream (retries until /dev/peios-pnp exists).
+    let eng = engine::Engine::new();
+    {
+        let eng = eng.clone();
+        std::thread::spawn(move || engine::run(eng));
+    }
+
     let listener = match TcpListener::bind(("0.0.0.0", port)) {
         Ok(l) => l,
         Err(err) => {
@@ -65,6 +74,7 @@ fn main() {
     let server = Arc::new(http::Server {
         ring,
         stats,
+        engine: eng,
         started: std::time::Instant::now(),
     });
     http::serve(listener, server);

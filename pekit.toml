@@ -1,9 +1,55 @@
+# pnpd — the PNP observer and authoring daemon: wire tap, verdict-stream
+# consumer, policy viewer/editor, and web UI. Never in the enforcement path
+# (the kernel reads its own policy); pnpd watches and writes the registry.
+#
+# The libpeios bootstrap mirrors netd's: pkg-config rather than
+# PEIOS_LIB_DIR, so peios-sys does not bake a checkout-local rpath into a
+# shipped binary, and a synthesized peios.pc from the sibling trees when
+# libpeios-devel is not installed in the build root.
+
 out_dir = "out"
 
 [build]
 command = """
 set -eu
+set -o pipefail 2>/dev/null || true
+
 SRC="$(pwd)"
+REPO_ROOT="$(cd "$SRC/.." && pwd)"
+
+for tool in cargo rustc gcc pkg-config; do
+  command -v "$tool" >/dev/null || { echo "missing required pnpd build tool: $tool" >&2; exit 1; }
+done
+
+unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
+
+if ! pkg-config --exists peios; then
+  LIBPEIOS_ROOT="$REPO_ROOT/libpeios"
+  # The BUILT pkm headers, not pkm/uapi (see authd/pekit.toml for why).
+  PKM_UAPI_ROOT="$REPO_ROOT/pkm/out/build/headers/usr/include"
+  [ -f "$LIBPEIOS_ROOT/Cargo.toml" ] || { echo "libpeios not found at $LIBPEIOS_ROOT" >&2; exit 1; }
+  [ -d "$LIBPEIOS_ROOT/include/peios" ] || { echo "libpeios headers not found" >&2; exit 1; }
+  [ -d "$PKM_UAPI_ROOT/pkm" ] || { echo "pkm UAPI headers not found at $PKM_UAPI_ROOT" >&2; exit 1; }
+  cargo build --release --locked --manifest-path "$LIBPEIOS_ROOT/Cargo.toml"
+  PC_DIR="$PEKIT_OUT/pkgconfig"
+  mkdir -p "$PC_DIR"
+  LIBPEIOS_VERSION="$(sed -n 's/^version = "\\([^"]*\\)".*/\\1/p' "$LIBPEIOS_ROOT/Cargo.toml" | head -1)"
+  {
+    printf 'prefix=%s\\n' "$LIBPEIOS_ROOT"
+    printf 'exec_prefix=${prefix}\\n'
+    printf 'libdir=%s/target/release\\n' "$LIBPEIOS_ROOT"
+    printf 'includedir=%s/include\\n' "$LIBPEIOS_ROOT"
+    printf '\\n'
+    printf 'Name: peios\\n'
+    printf 'Description: Peios userspace C ABI library (libpeios)\\n'
+    printf 'Version: %s\\n' "$LIBPEIOS_VERSION"
+    printf 'Libs: -L${libdir} -lpeios\\n'
+    printf 'Cflags: -I${includedir} -I%s\\n' "$PKM_UAPI_ROOT"
+  } > "$PC_DIR/peios.pc"
+  export PKG_CONFIG_PATH="$PC_DIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+fi
+
+export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 
 cargo build --release --locked --bin pnpd --target-dir "$PEKIT_OUT/target"
 
@@ -19,6 +65,9 @@ install -m 0644 "$SRC/registry.d/pnpd-service.reg" "$PEKIT_OUT/usr/share/regim/p
 cargo = "*"
 rust = "*"
 gcc = "*"
+pkgconf-pkg-config = "*"
+libpeios-devel = "*"
+kernel-headers = "*"
 
 [test]
 command = "cargo test --workspace"

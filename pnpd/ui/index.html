@@ -117,16 +117,76 @@
     padding: 5px 16px; background: var(--panel); border-top: 1px solid var(--line);
     color: var(--faint); font-size: 11px; display: flex; gap: 16px;
   }
+
+  /* ---- engine header + tabs ---- */
+  .tabs { display: flex; gap: 2px; margin-right: 10px; }
+  .tabs button { font-size: 12px; }
+  .tabs button.on { background: var(--accent, #7aa2f7); color: var(--bg); }
+  .estats { display: flex; gap: 12px; align-items: center; font-size: 12px; color: var(--dim); flex-wrap: wrap; }
+  .estats b { color: var(--text); font-weight: 600; }
+  .estats .enforcing { color: #9ece6a; font-weight: 700; }
+  .estats .permissive-flag { color: #e0af68; font-weight: 700; }
+  .estats .bad { color: #f7768e; font-weight: 700; }
+  #ingest-warn { display: none; padding: 6px 16px; background: #f7768e22; color: #f7768e; font-size: 12px; border-bottom: 1px solid var(--line); }
+
+  /* ---- verdict paint ---- */
+  td.vd { white-space: nowrap; }
+  .vbadge { display: inline-block; padding: 0 6px; border-radius: 3px; font-size: 10.5px; font-weight: 700; letter-spacing: .04em; }
+  .v-pass { background: #9ece6a33; color: #9ece6a; }
+  .v-drop { background: #f7768e33; color: #f7768e; }
+  .v-reject { background: #e0af6833; color: #e0af68; }
+  .v-backstop { border: 1px solid #f7768e; }
+  tr.vrow td { color: var(--dim); font-style: italic; background: #f7768e0d; }
+
+  /* ---- policy panel ---- */
+  #policy { flex: 1; overflow-y: auto; padding: 14px 18px; display: none; }
+  #policy.open { display: block; }
+  main.hiddenview { display: none; }
+  .layer-section h2 { font-size: 14px; margin: 14px 0 8px; color: var(--text); }
+  .layer-section h2 .lnote { color: var(--faint); font-weight: 400; font-size: 11.5px; margin-left: 8px; }
+  .rulecard {
+    border: 1px solid var(--line); border-radius: 6px; background: var(--panel);
+    padding: 8px 12px; margin: 6px 0; font-size: 12.5px;
+  }
+  .rulecard .rhead { display: flex; align-items: center; gap: 10px; }
+  .rulecard .rname { font-family: var(--mono); font-weight: 700; color: var(--text); }
+  .rulecard .rprio { color: var(--faint); font-size: 11px; }
+  .rulecard .disabled-flag { color: #e0af68; font-size: 11px; font-weight: 700; }
+  .rulecard .rbtns { margin-left: auto; display: flex; gap: 6px; }
+  .rulecard .rbtns button { font-size: 11px; padding: 1px 8px; }
+  .cond { display: inline-block; font-family: var(--mono); font-size: 11.5px; background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 1px 6px; margin: 2px 4px 2px 0; color: var(--dim); }
+  .cond b { color: var(--text); font-weight: 600; }
+  .acts { font-family: var(--mono); font-size: 11.5px; margin-top: 3px; }
+  .children { margin-left: 22px; border-left: 2px solid var(--line); padding-left: 10px; }
+  .editor { margin-top: 8px; border-top: 1px dashed var(--line); padding-top: 8px; }
+  .editor .erow { display: flex; gap: 6px; margin: 3px 0; }
+  .editor input { background: var(--bg); border: 1px solid var(--line); color: var(--text); border-radius: 4px; padding: 2px 8px; font-family: var(--mono); font-size: 12px; }
+  .editor input.ename { width: 180px; } .editor input.eval { flex: 1; }
+  .editor .ebtns { margin-top: 6px; display: flex; gap: 8px; align-items: center; }
+  .editor .emsg { color: #f7768e; font-size: 11.5px; }
+  .newrule { margin: 8px 0; }
 </style>
 </head>
 <body>
 <header>
-  <div class="brand"><span class="dot" id="dot"></span><b>PNP · Wire</b><span>packet viewer</span></div>
+  <div class="brand"><span class="dot" id="dot"></span><b>PNP</b><span>network policy</span></div>
+  <div class="tabs">
+    <button id="tab-wire" class="on">wire</button>
+    <button id="tab-policy">policy</button>
+  </div>
   <div class="stats">
     <span>captured <b id="s-cap">0</b></span>
     <span class="drops">dropped <b id="s-drop">0</b></span>
     <span>own traffic hidden <b id="s-sup">0</b></span>
     <span>shown <b id="s-shown">0</b></span>
+  </div>
+  <div class="estats">
+    <span id="e-state" class="permissive-flag">engine: –</span>
+    <span>gen <b id="e-gen">–</b></span>
+    <span>judged <b id="e-judged">0</b></span>
+    <span>pass <b id="e-pass">0</b></span>
+    <span>drop <b id="e-drop">0</b></span>
+    <span>reject <b id="e-rej">0</b></span>
   </div>
   <div class="controls">
     <input type="search" id="filter" placeholder="filter: address, name, text…">
@@ -135,6 +195,7 @@
     <button id="clear" title="clear the view (not the daemon ring)">clear</button>
   </div>
 </header>
+<div id="ingest-warn"></div>
 <div class="chips" id="chips"></div>
 <main>
   <div id="tablewrap">
@@ -146,7 +207,7 @@
     <table id="tbl" hidden>
       <thead><tr>
         <th>#</th><th>Time</th><th>If</th><th></th><th>Proto</th>
-        <th>Source</th><th>Destination</th><th>Len</th><th>Summary</th>
+        <th>Source</th><th>Destination</th><th>Len</th><th>Verdict</th><th>Summary</th>
       </tr></thead>
       <tbody id="rows"></tbody>
     </table>
@@ -160,9 +221,10 @@
     <div id="hex"></div>
   </div>
 </main>
+<div id="policy"></div>
 <footer>
   <span id="f-daemon"></span>
-  <span>the tap sees inbound before any filtering and outbound as handed to the driver — outbound checksums may be unfilled and offloaded frames oversized; that is placement, not corruption</span>
+  <span>the tap sees inbound before any filtering and outbound as handed to the driver — verdicts come from the engine's own event stream; a verdict row with no packet is a packet the tap could never see (dropped before transmit)</span>
 </footer>
 
 <script>
@@ -544,9 +606,20 @@ function makeRow(p) {
     `<td class="addr" title="${p.dis.src}">${p.dis.src}</td>` +
     `<td class="addr" title="${p.dis.dst}">${p.dis.dst}</td>` +
     `<td class="len">${p.meta.wire_len}</td>` +
+    `<td class="vd">${verdictBadge(p.verdict)}</td>` +
     `<td class="summary" title="${p.dis.summary.replace(/"/g, "&quot;")}">${p.dis.summary}</td>`;
   tr.onclick = () => select(p, tr);
   return tr;
+}
+
+function verdictBadge(v) {
+  if (!v) return "";
+  const cls = `vbadge v-${v.verdict}` + (v.backstop ? " v-backstop" : "");
+  const label = v.verdict.toUpperCase() + (v.backstop ? "·backstop" : "");
+  const title = `by ${v.by} — ${v.layer} @ ${v.seat}` +
+    (v.fail_closed ? " (fail-closed)" : "") +
+    (v.reject_degraded ? " (reject degraded to drop)" : "");
+  return `<span class="${cls}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
 }
 
 function add(meta) {
@@ -555,6 +628,8 @@ function add(meta) {
   try { dis = dissect(bytes); }
   catch (e) { dis = { proto: "other", src: "", dst: "", summary: `undissectable (${e.message})`, layers: [] }; }
   const p = { meta, bytes, dis };
+  p.vkey = pktKey(bytes, meta.dir);
+  attachPendingVerdict(p);
   packets.push(p);
   if (packets.length > ringCap) packets.shift();
   lastSeq = Math.max(lastSeq, meta.seq);
@@ -629,6 +704,285 @@ wrap.onscroll = () => {
   if (!atBottom && follow) { follow = false; $("follow").classList.remove("on"); }
 };
 
+/* ---------------- verdicts (the engine's event stream) ---------------- */
+/* A verdict is matched to a tap packet by tuple + direction; a verdict
+   that never finds its packet is rendered as its own row — for outbound
+   drops that is the only trace, because the TX tap stands after the
+   filter and never saw the packet. */
+const pendingVerdicts = new Map();   // vkey -> [verdict...]
+let lastVerdictSeq = 0;
+
+function pktKey(b, dir) {
+  if (b.length < 34) return null;
+  let et = u16(b, 12), off = 14;
+  if (et === 0x8100 && b.length >= 38) { et = u16(b, 16); off = 18; }
+  const d = dir === "out" ? "out" : "in";
+  if (et === 0x0800) {
+    const ihl = (b[off] & 0xf) * 4, proto = b[off + 9];
+    const src = `${b[off+12]}.${b[off+13]}.${b[off+14]}.${b[off+15]}`;
+    const dst = `${b[off+16]}.${b[off+17]}.${b[off+18]}.${b[off+19]}`;
+    let sp = 0, dp = 0;
+    if ((proto === 6 || proto === 17) && b.length >= off + ihl + 4) {
+      sp = u16(b, off + ihl); dp = u16(b, off + ihl + 2);
+    }
+    return `${d}|4|${proto}|${src}|${sp}|${dst}|${dp}`;
+  }
+  if (et === 0x86dd && b.length >= off + 40) {
+    const proto = b[off + 6];
+    const src = ip6(b, off + 8), dst = ip6(b, off + 24);
+    let sp = 0, dp = 0;
+    if ((proto === 6 || proto === 17) && b.length >= off + 44) {
+      sp = u16(b, off + 40); dp = u16(b, off + 42);
+    }
+    return `${d}|6|${proto}|${src}|${sp}|${dst}|${dp}`;
+  }
+  return `${d}|0|${et}`;
+}
+
+function verdictKey(v) {
+  if (v.family === 4 || v.family === 6)
+    return `${v.dir}|${v.family}|${v.protocol}|${v.src}|${v.src_port}|${v.dst}|${v.dst_port}`;
+  return `${v.dir}|0|${v.ether_type}`;
+}
+
+function attachPendingVerdict(p) {
+  if (!p.vkey) return;
+  const q = pendingVerdicts.get(p.vkey);
+  if (q && q.length) {
+    p.verdict = q.shift();
+    if (!q.length) pendingVerdicts.delete(p.vkey);
+    clearTimeout(p.verdict._orphan);
+  }
+}
+
+function onVerdict(v) {
+  lastVerdictSeq = Math.max(lastVerdictSeq, v.seq);
+  const key = verdictKey(v);
+  // Try recent packets first (the tap usually wins the race).
+  for (let i = packets.length - 1; i >= 0 && i >= packets.length - 200; i--) {
+    const p = packets[i];
+    if (!p.verdict && p.vkey === key) {
+      p.verdict = v;
+      const tr = rowsEl.querySelector(`tr[data-seq="${p.meta.seq}"]`);
+      if (tr) tr.querySelector(".vd").innerHTML = verdictBadge(v);
+      return;
+    }
+  }
+  // Park it; render as an orphan row if no packet claims it.
+  if (!pendingVerdicts.has(key)) pendingVerdicts.set(key, []);
+  pendingVerdicts.get(key).push(v);
+  v._orphan = setTimeout(() => {
+    const q = pendingVerdicts.get(key);
+    if (!q) return;
+    const idx = q.indexOf(v);
+    if (idx < 0) return;
+    q.splice(idx, 1);
+    if (!q.length) pendingVerdicts.delete(key);
+    renderOrphanVerdict(v);
+  }, 1200);
+}
+
+function renderOrphanVerdict(v) {
+  if (paused) return;
+  const tr = document.createElement("tr");
+  tr.className = "vrow";
+  const t = new Date(Number(v.t_ns / 1e6));
+  const ends = v.family ? `${v.src}:${v.src_port} → ${v.dst}:${v.dst_port}` : `ethertype 0x${v.ether_type.toString(16)}`;
+  tr.innerHTML =
+    `<td class="seq">·</td><td class="time">${t.toTimeString().slice(0,8)}</td>` +
+    `<td class="iface">if${v.ifindex}</td>` +
+    `<td class="dir">${v.dir === "out" ? "⇡" : "⇣"}</td>` +
+    `<td><span class="badge" style="background:var(--other)">verdict</span></td>` +
+    `<td class="addr" colspan="2">${ends}</td>` +
+    `<td class="len">${v.length}</td>` +
+    `<td class="vd">${verdictBadge(v)}</td>` +
+    `<td class="summary">no tap packet — ${v.dir === "out" ? "refused before transmit" : "seen only by the engine"}</td>`;
+  emptyEl.hidden = true; tbl.hidden = false;
+  rowsEl.appendChild(tr);
+  if (follow) wrap.scrollTop = wrap.scrollHeight;
+}
+
+function setEngine(e) {
+  const state = $("e-state");
+  if (!e.connected) { state.textContent = "engine: no stream"; state.className = "bad"; }
+  else if (e.enforcing) { state.textContent = `engine: ENFORCING`; state.className = "enforcing"; }
+  else { state.textContent = "engine: permissive (gen 0)"; state.className = "permissive-flag"; }
+  $("e-gen").textContent = e.generation;
+  $("e-judged").textContent = e.judged;
+  $("e-pass").textContent = e.verdict_pass;
+  $("e-drop").textContent = e.verdict_drop;
+  $("e-rej").textContent = e.verdict_reject;
+  const warn = $("ingest-warn");
+  if (e.last_ingest_error && Number(e.last_ingest_error) !== 0) {
+    warn.style.display = "block";
+    warn.textContent = `policy ingestion failed (errno ${e.last_ingest_error}) — the previous generation (${e.generation}) is still enforcing; fix the rules and re-save`;
+  } else warn.style.display = "none";
+  if (e.events_dropped && Number(e.events_dropped) > 0)
+    $("f-daemon").title = `engine event ring overwrote ${e.events_dropped} records (confessed)`;
+}
+
+/* ---------------- policy panel ---------------- */
+const policyEl = $("policy");
+let policyOpen = false;
+
+$("tab-wire").onclick = () => switchTab(false);
+$("tab-policy").onclick = () => switchTab(true);
+function switchTab(pol) {
+  policyOpen = pol;
+  document.querySelector("main").classList.toggle("hiddenview", pol);
+  policyEl.classList.toggle("open", pol);
+  $("tab-wire").classList.toggle("on", !pol);
+  $("tab-policy").classList.toggle("on", pol);
+  if (pol) loadPolicy();
+}
+
+async function loadPolicy() {
+  policyEl.textContent = "loading…";
+  try {
+    const res = await fetch("/api/policy");
+    renderPolicy(await res.json());
+  } catch (e) { policyEl.textContent = `cannot load policy: ${e.message}`; }
+}
+
+function valueToEditable(v) {
+  if (v.kind === "multi") return v.value.join(",");
+  return String(v.value);
+}
+
+function renderPolicy(pol) {
+  policyEl.textContent = "";
+  const intro = document.createElement("div");
+  intro.style.cssText = "color:var(--dim);font-size:12px;margin-bottom:6px";
+  intro.textContent = pol.present
+    ? "Machine\\System\\Network\\Rules — edits commit in one transaction; the kernel re-walks and publishes a new generation (or loudly keeps the old one if validation refuses). Backstop is DROP: every rule below is a permissive exception."
+    : "No Rules key exists yet — the engine is permissive. Creating a first rule arms enforcement.";
+  policyEl.appendChild(intro);
+  for (const layer of ["Packet", "RawPacket"]) {
+    const rules = (pol.layers && pol.layers[layer]) || [];
+    const sec = document.createElement("div");
+    sec.className = "layer-section";
+    const h = document.createElement("h2");
+    h.innerHTML = `${layer}<span class="lnote">${layer === "Packet"
+      ? "judged at each traversal's richest seat"
+      : "wire-proximate escape hatch — no FlowState, no tags"}</span>`;
+    sec.appendChild(h);
+    for (const rule of rules) sec.appendChild(ruleCard(rule, [layer]));
+    const add = document.createElement("button");
+    add.className = "newrule"; add.textContent = `+ new ${layer} rule`;
+    add.onclick = () => sec.insertBefore(editorCard([layer], null), add);
+    sec.appendChild(add);
+    policyEl.appendChild(sec);
+  }
+}
+
+function ruleCard(rule, parentPath) {
+  const path = [...parentPath, rule.name];
+  const card = document.createElement("div");
+  card.className = "rulecard";
+  const vals = rule.values || {};
+  const prio = vals["Priority"] ? ` prio ${vals["Priority"].value}` : "";
+  const disabled = vals["Enabled"] && Number(vals["Enabled"].value) === 0;
+  const head = document.createElement("div");
+  head.className = "rhead";
+  head.innerHTML = `<span class="rname">${rule.name}</span>` +
+    `<span class="rprio">${prio}</span>` +
+    (disabled ? `<span class="disabled-flag">disabled</span>` : "");
+  const btns = document.createElement("div");
+  btns.className = "rbtns";
+  const bEdit = document.createElement("button"); bEdit.textContent = "edit";
+  const bChild = document.createElement("button"); bChild.textContent = "+ exception";
+  const bDel = document.createElement("button"); bDel.textContent = "delete";
+  btns.append(bEdit, bChild, bDel);
+  head.appendChild(btns);
+  card.appendChild(head);
+
+  const conds = document.createElement("div");
+  for (const [k, v] of Object.entries(vals)) {
+    if (k === "Actions" || k === "Priority" || k === "Enabled") continue;
+    const c = document.createElement("span");
+    c.className = "cond";
+    c.innerHTML = `<b>${k}</b> = ${valueToEditable(v)}`;
+    conds.appendChild(c);
+  }
+  card.appendChild(conds);
+  const acts = document.createElement("div");
+  acts.className = "acts";
+  acts.textContent = "→ " + (vals["Actions"] ? valueToEditable(vals["Actions"]) : "NULL (abstains)");
+  card.appendChild(acts);
+
+  if ((rule.children || []).length) {
+    const kids = document.createElement("div");
+    kids.className = "children";
+    for (const child of rule.children) kids.appendChild(ruleCard(child, path));
+    card.appendChild(kids);
+  }
+
+  bEdit.onclick = () => card.appendChild(editorCard(parentPath, rule));
+  bChild.onclick = () => card.appendChild(editorCard(path, null));
+  bDel.onclick = async () => {
+    if (!confirm(`Delete rule ${path.join("/")} and its exceptions?`)) return;
+    const res = await fetch(`/api/policy/delete?path=${encodeURIComponent(path.join("/"))}`);
+    if (res.ok) loadPolicy();
+    else alert((await res.json()).error || "delete failed");
+  };
+  return card;
+}
+
+/* An editor for one rule's own values. rule === null -> creating. */
+function editorCard(parentPath, rule) {
+  const ed = document.createElement("div");
+  ed.className = "editor";
+  const nameRow = document.createElement("div");
+  nameRow.className = "erow";
+  const nameIn = document.createElement("input");
+  nameIn.className = "ename"; nameIn.placeholder = "rule-name";
+  if (rule) { nameIn.value = rule.name; nameIn.disabled = true; }
+  nameRow.appendChild(nameIn);
+  ed.appendChild(nameRow);
+
+  const rows = [];
+  const addRow = (k, v) => {
+    const r = document.createElement("div");
+    r.className = "erow";
+    const kIn = document.createElement("input");
+    kIn.className = "ename"; kIn.placeholder = "value name (e.g. DstPort.Equal)"; kIn.value = k;
+    const vIn = document.createElement("input");
+    vIn.className = "eval"; vIn.placeholder = "value (commas make a list; sz:/int:/multi: force a type)"; vIn.value = v;
+    r.append(kIn, vIn); ed.appendChild(r);
+    rows.push([kIn, vIn]);
+  };
+  if (rule) for (const [k, v] of Object.entries(rule.values || {})) addRow(k, valueToEditable(v));
+  else { addRow("Actions", "PASS"); addRow("", ""); }
+
+  const btns = document.createElement("div");
+  btns.className = "ebtns";
+  const bRow = document.createElement("button"); bRow.textContent = "+ value";
+  const bSave = document.createElement("button"); bSave.textContent = rule ? "save" : "create";
+  const bCancel = document.createElement("button"); bCancel.textContent = "cancel";
+  const msg = document.createElement("span"); msg.className = "emsg";
+  btns.append(bRow, bSave, bCancel, msg);
+  ed.appendChild(btns);
+
+  bRow.onclick = () => addRow("", "");
+  bCancel.onclick = () => ed.remove();
+  bSave.onclick = async () => {
+    const name = nameIn.value.trim();
+    if (!name) { msg.textContent = "rule needs a name"; return; }
+    const path = [...parentPath, name].join("/");
+    let q = `path=${encodeURIComponent(path)}`;
+    for (const [kIn, vIn] of rows) {
+      const k = kIn.value.trim();
+      if (!k) continue;
+      q += `&v.${encodeURIComponent(k)}=${encodeURIComponent(vIn.value.trim())}`;
+    }
+    msg.textContent = "saving…";
+    const res = await fetch(`/api/policy/set?${q}`);
+    if (res.ok) { loadPolicy(); }
+    else msg.textContent = (await res.json()).error || "save failed";
+  };
+  return ed;
+}
+
 /* ---------------- data feed ---------------- */
 function setStats(s) {
   $("s-cap").textContent = s.captured;
@@ -641,8 +995,12 @@ async function backfill() {
   try {
     const res = await fetch(`/api/packets?since=${lastSeq}`);
     for (const meta of await res.json()) add(meta);
+    const vres = await fetch(`/api/verdicts?since=${lastVerdictSeq}`);
+    for (const v of await vres.json()) onVerdict(v);
     const st = await fetch("/api/status");
     setStats(await st.json());
+    const en = await fetch("/api/engine");
+    setEngine(await en.json());
   } catch (e) { /* stream reconnect will retry */ }
 }
 function connect() {
@@ -650,7 +1008,9 @@ function connect() {
   es.onopen = () => { $("dot").className = "dot live"; backfill(); };
   es.onerror = () => { $("dot").className = "dot stale"; };
   es.addEventListener("packet", ev => add(JSON.parse(ev.data)));
+  es.addEventListener("verdict", ev => onVerdict(JSON.parse(ev.data)));
   es.addEventListener("stats", ev => setStats(JSON.parse(ev.data)));
+  es.addEventListener("engine", ev => setEngine(JSON.parse(ev.data)));
 }
 connect();
 </script>
