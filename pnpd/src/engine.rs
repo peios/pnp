@@ -26,6 +26,7 @@ pub const VERDICT_DROP: u8 = 2;
 pub const EV_F_BACKSTOP: u8 = 0x01;
 pub const EV_F_FAIL_CLOSED: u8 = 0x02;
 pub const EV_F_REJECT_DEGRADED: u8 = 0x04;
+pub const EV_F_REJUDGED: u8 = 0x08;
 
 /// Mirror of `struct peios_pnp_event` (pkm/uapi/pkm/pnp.h).
 #[repr(C)]
@@ -93,10 +94,18 @@ pub struct PnpStatus {
     pub reports_emitted: u64,
     pub counter_cells: u64,
     pub reporting_level: u64,
+    pub seen_local_out: u64,
+    pub flow_judged: u64,
+    pub flow_cached: u64,
+    pub flow_rejudged: u64,
+    pub flow_expired: u64,
+    pub flow_uncached: u64,
+    pub refusals_emitted: u64,
+    pub refusals_bypassed: u64,
     pub _reserved: [u64; 4],
 }
 
-const _: () = assert!(std::mem::size_of::<PnpStatus>() == 288);
+const _: () = assert!(std::mem::size_of::<PnpStatus>() == 352);
 
 /// Mirror of `struct peios_pnp_counter_rec` (pkm/uapi/pkm/pnp.h).
 #[repr(C)]
@@ -143,6 +152,67 @@ pub struct CountersDump {
     pub total_cells: u32,
 }
 
+pub const FLOW_MAX_TAGS: usize = 8;
+pub const FLOW_SENTENCES: usize = 2;
+
+/// Mirror of `struct peios_pnp_flow_rec` (ABI 3). The sentences and tags
+/// are parallel scalar arrays (UAPI records hold scalars only).
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PnpFlowRec {
+    pub id: u32,
+    pub family: u8,
+    pub protocol: u8,
+    pub direction: u8,
+    pub loopback: u8,
+    pub seen_reply: u8,
+    pub assured: u8,
+    pub related: u8,
+    pub judged: u8,
+    pub ifindex: i32,
+    pub timeout_secs: u32,
+    pub src_addr: [u8; 16],
+    pub dst_addr: [u8; 16],
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub icmp_type: u8,
+    pub icmp_code: u8,
+    pub n_tags: u8,
+    pub _pad0: [u8; 5],
+    pub start_secs: u64,
+    pub packets: [u64; 2],
+    pub bytes: [u64; 2],
+    pub sentence_generation: [u64; FLOW_SENTENCES],
+    pub sentence_expires_at: [i64; FLOW_SENTENCES],
+    pub sentence_rule_hash: [u64; FLOW_SENTENCES],
+    pub sentence_verdict: [u8; FLOW_SENTENCES],
+    pub sentence_reject_kind: [u8; FLOW_SENTENCES],
+    pub _pad1: [u8; 4],
+    pub tag_hash: [u64; FLOW_MAX_TAGS],
+    pub tag_value: [u64; FLOW_MAX_TAGS],
+}
+
+const _: () = assert!(std::mem::size_of::<PnpFlowRec>() == 288);
+
+/// Mirror of `struct peios_pnp_flows_query`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PnpFlowsQuery {
+    pub buf: u64,
+    pub buf_len: u32,
+    pub count: u32,
+    pub total: u32,
+    pub _pad0: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<PnpFlowsQuery>() == 24);
+
+/// One dump's worth of live flows plus how many the walk saw.
+pub struct FlowsDump {
+    pub records: Vec<PnpFlowRec>,
+    pub total: u32,
+}
+
 /// _IOR('N', 1, struct peios_pnp_status): dir=2, size, type 'N', nr 1.
 const IOC_STATUS: libc::c_ulong = (2u64 << 30
     | (std::mem::size_of::<PnpStatus>() as u64) << 16
@@ -153,11 +223,19 @@ const IOC_COUNTERS: libc::c_ulong = (3u64 << 30
     | (std::mem::size_of::<PnpCountersQuery>() as u64) << 16
     | (b'N' as u64) << 8
     | 2) as libc::c_ulong;
-/// The kernel ABI this daemon speaks (machinery slice).
-const ABI: u64 = 2;
+/// _IOWR('N', 3, struct peios_pnp_flows_query): dir=3.
+const IOC_FLOWS: libc::c_ulong = (3u64 << 30
+    | (std::mem::size_of::<PnpFlowsQuery>() as u64) << 16
+    | (b'N' as u64) << 8
+    | 3) as libc::c_ulong;
+/// The kernel ABI this daemon speaks (the Flow layer slice).
+const ABI: u64 = 3;
 /// Most cells one dump asks for (the kernel caps tables at 4096 keys;
 /// the viewer is a debugging surface, not a census).
 const COUNTERS_DUMP_MAX: usize = 4096;
+/// Most flows one dump asks for — a viewer's page, not the whole table
+/// (the kernel reports how many exist, so a short dump is visible).
+const FLOWS_DUMP_MAX: usize = 2048;
 
 const DEVICE: &str = "/dev/peios-pnp";
 const RING: usize = 8192;
@@ -284,6 +362,32 @@ impl Engine {
         Ok(CountersDump {
             records,
             total_cells: query.total,
+        })
+    }
+
+    /// Dumps the live flows (conntrack's table, with PNP's sentences).
+    pub fn flows(&self) -> Result<FlowsDump, String> {
+        let fd = self
+            .inner
+            .lock()
+            .unwrap()
+            .dev_fd
+            .ok_or_else(|| "engine not connected".to_string())?;
+        let mut records: Vec<PnpFlowRec> =
+            vec![unsafe { std::mem::zeroed() }; FLOWS_DUMP_MAX];
+        let mut query = PnpFlowsQuery {
+            buf: records.as_mut_ptr() as u64,
+            buf_len: (records.len() * std::mem::size_of::<PnpFlowRec>()) as u32,
+            ..Default::default()
+        };
+        let rc = unsafe { libc::ioctl(fd, IOC_FLOWS, &mut query as *mut PnpFlowsQuery) };
+        if rc != 0 {
+            return Err(format!("FLOWS ioctl: {}", std::io::Error::last_os_error()));
+        }
+        records.truncate(query.count as usize);
+        Ok(FlowsDump {
+            records,
+            total: query.total,
         })
     }
 }

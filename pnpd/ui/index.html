@@ -139,12 +139,15 @@
   tr.vrow td { color: var(--dim); font-style: italic; background: #f7768e0d; }
 
   /* ---- policy panel ---- */
-  #policy, #counters { flex: 1; overflow-y: auto; padding: 14px 18px; display: none; }
-  #policy.open, #counters.open { display: block; }
-  #counters table { border-collapse: collapse; font-size: 12px; }
-  #counters th, #counters td { padding: 3px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
-  #counters td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  #policy, #counters, #flows { flex: 1; overflow-y: auto; padding: 14px 18px; display: none; }
+  #policy.open, #counters.open, #flows.open { display: block; }
+  #counters table, #flows table { border-collapse: collapse; font-size: 12px; font-family: var(--mono); }
+  #counters th, #counters td, #flows th, #flows td { padding: 3px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  #counters td.n, #flows td.n { text-align: right; font-variant-numeric: tabular-nums; }
   #counters .stream { font-weight: 600; }
+  #flows th { color: var(--dim); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .5px; }
+  #flows td.dim { color: var(--dim); }
+  #flows .tag { display: inline-block; font-size: 10.5px; border: 1px solid var(--line); border-radius: 3px; padding: 0 5px; margin-right: 4px; color: var(--dim); }
   main.hiddenview { display: none; }
   .layer-section h2 { font-size: 14px; margin: 14px 0 8px; color: var(--text); }
   .layer-section h2 .lnote { color: var(--faint); font-weight: 400; font-size: 11.5px; margin-left: 8px; }
@@ -177,6 +180,7 @@
   <div class="tabs">
     <button id="tab-wire" class="on">wire</button>
     <button id="tab-policy">policy</button>
+    <button id="tab-flows">flows</button>
     <button id="tab-counters">counters</button>
   </div>
   <div class="stats">
@@ -198,6 +202,8 @@
     <span id="e-reports-wrap">reports <b id="e-reports">0</b></span>
     <span title="live counter cells across every materialized table">cells <b id="e-cells">0</b></span>
     <span title="CurrentReportingLevel of the active generation (REPORT(n) fires when n >= this; absent = 1)">report level <b id="e-rl">–</b></span>
+    <span id="e-flows-wrap">flows judged <b id="e-flows">0</b></span>
+    <span id="e-refusals-wrap">refusals <b id="e-refusals">0</b></span>
   </div>
   <div class="controls">
     <input type="search" id="filter" placeholder="filter: address, name, text…">
@@ -233,6 +239,7 @@
   </div>
 </main>
 <div id="policy"></div>
+<div id="flows"></div>
 <div id="counters"></div>
 <footer>
   <span id="f-daemon"></span>
@@ -633,7 +640,8 @@ function verdictBadge(v) {
     (v.backstop ? "·backstop" : "");
   const title = `by ${v.by} — ${v.layer} @ ${v.seat}` +
     (v.fail_closed ? " (fail-closed)" : "") +
-    (v.reject_degraded ? " (reject degraded to drop)" : "");
+    (v.reject_degraded ? " (reject degraded to drop)" : "") +
+    (v.rejudged ? " (flow re-judged: stale sentence)" : "");
   return `<span class="${cls}" title="${title.replace(/"/g, "&quot;")}">${label}</span>`;
 }
 
@@ -890,6 +898,10 @@ function setEngine(e) {
   $("e-reports-wrap").title = `KMES network-report events emitted (${e.fx_reports || 0} REPORT effects yielded)`;
   $("e-cells").textContent = e.counter_cells || 0;
   $("e-rl").textContent = e.reporting_level == null ? "–" : e.reporting_level;
+  $("e-flows").textContent = e.flow_judged || 0;
+  $("e-flows-wrap").title = `Flow-layer evaluations (sentences written) — ${e.flow_cached || 0} packets answered by a cached sentence, ${e.flow_rejudged || 0} re-judged after a policy change, ${e.flow_expired || 0} re-judged at a time edge, ${e.flow_uncached || 0} evaluated per packet (no extension to hold a sentence)`;
+  $("e-refusals").textContent = e.refusals_emitted || 0;
+  $("e-refusals-wrap").title = `REJECT answers built and sent (RST / ICMP) — ${e.refusals_bypassed || 0} of PNP's own refusals waved through its seats unjudged, ${e.reject_degraded || 0} REJECTs degraded to DROP (nothing to send)`;
   const warn = $("ingest-warn");
   if (e.last_ingest_error && Number(e.last_ingest_error) !== 0) {
     warn.style.display = "block";
@@ -905,18 +917,125 @@ const countersEl = $("counters");
 let policyOpen = false;
 let countersTimer = null;
 
+const flowsEl = $("flows");
 $("tab-wire").onclick = () => switchTab("wire");
 $("tab-policy").onclick = () => switchTab("policy");
+$("tab-flows").onclick = () => switchTab("flows");
 $("tab-counters").onclick = () => switchTab("counters");
 function switchTab(which) {
   policyOpen = which === "policy";
   document.querySelector("main").classList.toggle("hiddenview", which !== "wire");
   policyEl.classList.toggle("open", which === "policy");
   countersEl.classList.toggle("open", which === "counters");
-  for (const t of ["wire", "policy", "counters"]) $(`tab-${t}`).classList.toggle("on", which === t);
+  flowsEl.classList.toggle("open", which === "flows");
+  for (const t of ["wire", "policy", "flows", "counters"]) $(`tab-${t}`).classList.toggle("on", which === t);
   if (policyOpen) loadPolicy();
   clearInterval(countersTimer); countersTimer = null;
   if (which === "counters") { loadCounters(); countersTimer = setInterval(loadCounters, 2000); }
+  if (which === "flows") { loadFlows(); countersTimer = setInterval(loadFlows, 2000); }
+}
+
+/* ---------------- flows panel ---------------- */
+/* Conntrack's live table with PNP's view of each flow: the sentence the
+   Flow layer cached (verdict, generation, expiry, the rule), the flow's
+   start, tags. Rules are reported by the FNV-1a-64 hash of their path —
+   the same identity the kernel keys tags and streams by — and resolved
+   here against the policy. */
+const FNV_OFFSET = 0xcbf29ce484222325n, FNV_PRIME = 0x100000001b3n, MASK64 = 0xffffffffffffffffn;
+function fnv1a64(s) {
+  let h = FNV_OFFSET;
+  for (const b of new TextEncoder().encode(s)) { h ^= BigInt(b); h = (h * FNV_PRIME) & MASK64; }
+  return h.toString(16).padStart(16, "0");
+}
+const ruleNames = new Map();   // rule path hash -> "Layer/path"
+const tagNames = new Map();    // tag name hash -> name
+function indexPolicy(pol) {
+  ruleNames.clear(); tagNames.clear();
+  const walk = (layer, rule, parent) => {
+    const path = parent ? `${parent}/${rule.name}` : rule.name;
+    ruleNames.set(fnv1a64(path), `${layer}/${path}`);
+    for (const [k, v] of Object.entries(rule.values || {})) {
+      const m = k.match(/^Tag\.(.+)\.[A-Za-z]+$/);
+      if (m) tagNames.set(fnv1a64(m[1]), m[1]);
+      if (k === "Actions") for (const a of (v.kind === "multi" ? v.value : [String(v.value)])) {
+        const t = String(a).match(/TAG\(\s*([^,)\s]+)/i);
+        if (t) tagNames.set(fnv1a64(t[1]), t[1]);
+      }
+    }
+    for (const c of rule.children || []) walk(layer, c, path);
+  };
+  for (const [layer, rules] of Object.entries(pol.layers || {})) for (const r of rules) walk(layer, r, "");
+  ruleNames.set(fnv1a64("backstop"), "backstop");
+  ruleNames.set(fnv1a64("fail-closed"), "fail-closed");
+}
+let policyIndexed = 0;
+async function loadFlows() {
+  try {
+    if (Date.now() - policyIndexed > 10000) {
+      const pres = await fetch("/api/policy");
+      indexPolicy(await pres.json());
+      policyIndexed = Date.now();
+    }
+    const res = await fetch("/api/flows");
+    renderFlows(await res.json());
+  } catch (e) { flowsEl.textContent = `cannot load flows: ${e.message}`; }
+}
+
+function fmtDur(secs) {
+  secs = Math.max(0, Math.floor(secs));
+  return secs < 60 ? `${secs}s` : secs < 3600 ? `${Math.floor(secs / 60)}m${secs % 60}s` : `${Math.floor(secs / 3600)}h${Math.floor(secs % 3600 / 60)}m`;
+}
+function fmtBytes(n) {
+  n = Number(n);
+  return n < 1024 ? `${n}` : n < 1048576 ? `${(n / 1024).toFixed(1)}k` : `${(n / 1048576).toFixed(1)}M`;
+}
+function sentenceBadge(s, now) {
+  if (!s) return `<span class="dim">–</span>`;
+  const cls = `vbadge v-${s.verdict}`;
+  const label = s.verdict.toUpperCase() + (s.verdict === "reject" && s.reject_kind ? `·${s.reject_kind}` : "");
+  const rule = ruleNames.get(s.rule_hash) || `rule #${s.rule_hash.slice(0, 8)}`;
+  const exp = Number(s.expires_at) ? ` · expires in ${fmtDur(Number(s.expires_at) - now)}` : "";
+  return `<span class="${cls}" title="gen ${s.generation}${exp}">${label}</span> <span class="dim" title="attributing rule">${rule}</span>` +
+    `<span class="dim"> g${s.generation}${Number(s.expires_at) ? " ⏱" : ""}</span>`;
+}
+function renderFlows(f) {
+  flowsEl.textContent = "";
+  const intro = document.createElement("div");
+  intro.style.cssText = "color:var(--dim);font-size:12px;margin-bottom:8px";
+  if (!f.connected) { intro.textContent = `engine not connected${f.error ? ` (${f.error})` : ""}`; flowsEl.appendChild(intro); return; }
+  intro.textContent = f.records.length
+    ? `${f.total} live flow${f.total === 1 ? "" : "s"}${f.records.length < f.total ? ` (showing ${f.records.length})` : ""} — each judged once per local endpoint by the Flow layer; the sentence answers for every later packet until the policy generation changes or a consulted time condition flips (⏱). A loopback flow has two endpoints and two sentences.`
+    : "No live flows. Conntrack's table is empty — nothing has spoken since the last timeouts.";
+  flowsEl.appendChild(intro);
+  if (!f.records.length) return;
+  const now = Math.floor(Date.now() / 1000);
+  const tbl = document.createElement("table");
+  tbl.innerHTML = `<thead><tr><th></th><th>proto</th><th>originator</th><th>responder</th><th>if</th><th>state</th><th>age</th><th>ttl</th><th>pkts</th><th>bytes</th><th>sentence</th><th>tags</th></tr></thead>`;
+  const body = document.createElement("tbody");
+  f.records.sort((a, b) => Number(b.start_secs) - Number(a.start_secs));
+  for (const r of f.records) {
+    const proto = { 1: "ICMP", 6: "TCP", 17: "UDP", 58: "ICMPv6", 132: "SCTP" }[r.protocol] || `proto ${r.protocol}`;
+    const port = p => (r.protocol === 6 || r.protocol === 17 || r.protocol === 132) ? `:${p}` : "";
+    const a = r.family === 6 ? canon6 : (x => x);
+    const ends = r.protocol === 1 || r.protocol === 58
+      ? [`${a(r.src)} id ${r.src_port}`, `${a(r.dst)} type ${r.icmp_type}`]
+      : [`${a(r.src)}${port(r.src_port)}`, `${a(r.dst)}${port(r.dst_port)}`];
+    const state = [r.related ? "related" : "", r.assured ? "assured" : r.seen_reply ? "replied" : "unreplied"].filter(Boolean).join(" ");
+    const dir = r.judged ? (r.dir === "out" ? "⇡" : "⇣") : "·";
+    const sentences = r.sentences.map(s => sentenceBadge(s, now)).join("<br>") || `<span class="dim">${r.judged ? "–" : "not judged (permissive generation)"}</span>`;
+    const tags = r.tags.map(t => `<span class="tag">${tagNames.get(t.hash) || t.hash.slice(0, 8)}=${t.value}</span>`).join("");
+    const tr = document.createElement("tr");
+    tr.innerHTML = `<td class="dir ${r.dir === "out" ? "dir-out" : "dir-in"}" title="${r.loopback ? "loopback: two endpoints" : r.dir === "out" ? "originated here" : "originated by the peer"}">${dir}${r.loopback ? "⇣" : ""}</td>` +
+      `<td>${proto}</td><td>${ends[0]}</td><td>${ends[1]}</td>` +
+      `<td class="dim">${ifNames.get(r.ifindex) || (r.ifindex ? `if${r.ifindex}` : "–")}</td>` +
+      `<td class="dim">${state}</td><td class="n dim">${fmtDur(now - Number(r.start_secs))}</td>` +
+      `<td class="n dim">${fmtDur(r.timeout_secs)}</td>` +
+      `<td class="n">${r.packets[0]}/${r.packets[1]}</td><td class="n">${fmtBytes(r.bytes[0])}/${fmtBytes(r.bytes[1])}</td>` +
+      `<td>${sentences}</td><td>${tags}</td>`;
+    body.appendChild(tr);
+  }
+  tbl.appendChild(body);
+  flowsEl.appendChild(tbl);
 }
 
 /* ---------------- counters panel ---------------- */
@@ -1006,14 +1125,17 @@ function renderPolicy(pol) {
     ? "Machine\\System\\Network\\Rules — edits commit in one transaction; the kernel re-walks and publishes a new generation (or loudly keeps the old one if validation refuses). Backstop is DROP: every rule below is a permissive exception."
     : "No Rules key exists yet — the engine is permissive. Creating a first rule arms enforcement.";
   policyEl.appendChild(intro);
-  for (const layer of ["Packet", "RawPacket"]) {
+  const NOTES = {
+    Flow: "judged once per flow at the IP seats, after Packet; the sentence answers for the rest — flow-invariant facts only, plus Related and Start.*",
+    Packet: "judged per packet at each traversal's richest seat — the cheap filter in front of Flow",
+    RawPacket: "wire-proximate escape hatch — no FlowState, no tags",
+  };
+  for (const layer of ["Flow", "Packet", "RawPacket"]) {
     const rules = (pol.layers && pol.layers[layer]) || [];
     const sec = document.createElement("div");
     sec.className = "layer-section";
     const h = document.createElement("h2");
-    h.innerHTML = `${layer}<span class="lnote">${layer === "Packet"
-      ? "judged at each traversal's richest seat"
-      : "wire-proximate escape hatch — no FlowState, no tags"}</span>`;
+    h.innerHTML = `${layer}<span class="lnote">${NOTES[layer]}</span>`;
     sec.appendChild(h);
     for (const rule of rules) sec.appendChild(ruleCard(rule, [layer]));
     const add = document.createElement("button");

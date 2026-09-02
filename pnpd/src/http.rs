@@ -99,6 +99,10 @@ fn handle(stream: TcpStream, server: &Server) -> std::io::Result<()> {
             let body = counters_json(server);
             respond(stream, "200 OK", "application/json", body.as_bytes())
         }
+        "/api/flows" => {
+            let body = flows_json(server);
+            respond(stream, "200 OK", "application/json", body.as_bytes())
+        }
         "/api/policy" => {
             let body = policy::read_policy();
             respond(stream, "200 OK", "application/json", body.as_bytes())
@@ -291,6 +295,107 @@ fn engine_json(server: &Server) -> String {
         .num("reports_emitted", s.reports_emitted as i128)
         .num("counter_cells", s.counter_cells as i128)
         .num("reporting_level", s.reporting_level as i128)
+        .num("seen_local_out", s.seen_local_out as i128)
+        .num("flow_judged", s.flow_judged as i128)
+        .num("flow_cached", s.flow_cached as i128)
+        .num("flow_rejudged", s.flow_rejudged as i128)
+        .num("flow_expired", s.flow_expired as i128)
+        .num("flow_uncached", s.flow_uncached as i128)
+        .num("refusals_emitted", s.refusals_emitted as i128)
+        .num("refusals_bypassed", s.refusals_bypassed as i128)
+        .finish()
+}
+
+fn verdict_name(v: u8) -> &'static str {
+    match v {
+        engine::VERDICT_PASS => "pass",
+        engine::VERDICT_REJECT => "reject",
+        _ => "drop",
+    }
+}
+
+fn sentence_json(r: &engine::PnpFlowRec, slot: usize) -> String {
+    let verdict = r.sentence_verdict[slot];
+    Obj::new()
+        .num("slot", slot as i64)
+        .num("generation", r.sentence_generation[slot] as i128)
+        .num("expires_at", r.sentence_expires_at[slot] as i128)
+        .str("rule_hash", &format!("{:016x}", r.sentence_rule_hash[slot]))
+        .str("verdict", verdict_name(verdict))
+        .str(
+            "reject_kind",
+            if verdict == engine::VERDICT_REJECT {
+                if r.sentence_reject_kind[slot] == 1 { "Prohibited" } else { "Refused" }
+            } else {
+                ""
+            },
+        )
+        .finish()
+}
+
+/// The live flows: `{"connected":1,"total":N,"records":[{id,family,
+/// protocol,dir,loopback,seen_reply,assured,related,judged,ifindex,
+/// timeout_secs,src,dst,src_port,dst_port,icmp_type,icmp_code,start_secs,
+/// packets:[o,r],bytes:[o,r],sentences:[...],tags:[{hash,value}]}]}`.
+/// Sentences are listed for slot 0 (the flow's) and slot 1 (a loopback
+/// flow's inbound endpoint) when present; rule hashes are FNV-1a-64 of
+/// the attributing rule's path, which the viewer resolves against the
+/// policy it can read.
+fn flows_json(server: &Server) -> String {
+    let dump = match server.engine.flows() {
+        Ok(d) => d,
+        Err(err) => {
+            return Obj::new()
+                .num("connected", 0)
+                .str("error", &err)
+                .finish()
+        }
+    };
+    let mut records = Vec::with_capacity(dump.records.len());
+    for r in &dump.records {
+        let sentences: Vec<String> = (0..engine::FLOW_SENTENCES)
+            .filter(|&slot| r.sentence_generation[slot] != 0)
+            .map(|slot| sentence_json(r, slot))
+            .collect();
+        let tags: Vec<String> = (0..(r.n_tags as usize).min(engine::FLOW_MAX_TAGS))
+            .map(|i| {
+                Obj::new()
+                    .str("hash", &format!("{:016x}", r.tag_hash[i]))
+                    .num("value", r.tag_value[i] as i128)
+                    .finish()
+            })
+            .collect();
+        records.push(
+            Obj::new()
+                .num("id", r.id as i128)
+                .num("family", r.family as i64)
+                .num("protocol", r.protocol as i64)
+                .str("dir", if r.direction == 1 { "out" } else { "in" })
+                .num("loopback", r.loopback as i64)
+                .num("seen_reply", r.seen_reply as i64)
+                .num("assured", r.assured as i64)
+                .num("related", r.related as i64)
+                .num("judged", r.judged as i64)
+                .num("ifindex", r.ifindex as i64)
+                .num("timeout_secs", r.timeout_secs as i128)
+                .str("src", &fmt_addr(r.family, &r.src_addr))
+                .str("dst", &fmt_addr(r.family, &r.dst_addr))
+                .num("src_port", r.src_port as i64)
+                .num("dst_port", r.dst_port as i64)
+                .num("icmp_type", r.icmp_type as i64)
+                .num("icmp_code", r.icmp_code as i64)
+                .num("start_secs", r.start_secs as i128)
+                .raw("packets", &format!("[{},{}]", r.packets[0], r.packets[1]))
+                .raw("bytes", &format!("[{},{}]", r.bytes[0], r.bytes[1]))
+                .raw("sentences", &format!("[{}]", sentences.join(",")))
+                .raw("tags", &format!("[{}]", tags.join(",")))
+                .finish(),
+        );
+    }
+    Obj::new()
+        .num("connected", 1)
+        .num("total", dump.total as i128)
+        .raw("records", &format!("[{}]", records.join(",")))
         .finish()
 }
 
@@ -373,17 +478,18 @@ fn fmt_addr(family: u8, bytes: &[u8; 16]) -> String {
 }
 
 fn verdict_json(ev: &PnpEvent) -> String {
-    let verdict = match ev.verdict {
-        engine::VERDICT_PASS => "pass",
-        engine::VERDICT_REJECT => "reject",
-        _ => "drop",
-    };
+    let verdict = verdict_name(ev.verdict);
     let seat = match ev.seat {
         1 => "ingress",
         2 => "egress",
+        4 => "local-out",
         _ => "local-in",
     };
-    let layer = if ev.layer == 1 { "RawPacket" } else { "Packet" };
+    let layer = match ev.layer {
+        1 => "RawPacket",
+        2 => "Flow",
+        _ => "Packet",
+    };
     let attr_end = ev
         .attributed
         .iter()
@@ -410,6 +516,7 @@ fn verdict_json(ev: &PnpEvent) -> String {
             "reject_degraded",
             (ev.flags & engine::EV_F_REJECT_DEGRADED != 0) as i64,
         )
+        .num("rejudged", (ev.flags & engine::EV_F_REJUDGED != 0) as i64)
         .str("dir", if ev.direction == 1 { "out" } else { "in" })
         .num("family", ev.addr_family as i64)
         .num("protocol", ev.protocol as i64)
