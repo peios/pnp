@@ -12,6 +12,7 @@ mod http;
 mod json;
 mod log;
 mod policy;
+mod sid;
 mod ring;
 
 use std::net::TcpListener;

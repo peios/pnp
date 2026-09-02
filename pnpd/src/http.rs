@@ -11,6 +11,7 @@ use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::sid;
 use crate::capture::CaptureStats;
 use crate::engine::{self, Engine, PnpEvent};
 use crate::json::{self, Obj};
@@ -101,6 +102,10 @@ fn handle(stream: TcpStream, server: &Server) -> std::io::Result<()> {
         }
         "/api/flows" => {
             let body = flows_json(server);
+            respond(stream, "200 OK", "application/json", body.as_bytes())
+        }
+        "/api/listeners" => {
+            let body = listeners_json(server);
             respond(stream, "200 OK", "application/json", body.as_bytes())
         }
         "/api/policy" => {
@@ -304,7 +309,51 @@ fn engine_json(server: &Server) -> String {
         .num("refusals_emitted", s.refusals_emitted as i128)
         .num("refusals_bypassed", s.refusals_bypassed as i128)
         .num("teardowns_emitted", s.teardowns_emitted as i128)
+        .num("identity_unresolved", s.identity_unresolved as i128)
         .finish()
+}
+
+fn local_kind_name(kind: u8) -> &'static str {
+    match kind {
+        engine::LOCAL_PROGRAM => "program",
+        engine::LOCAL_KERNEL => "kernel",
+        engine::LOCAL_SHARED => "shared",
+        engine::LOCAL_NONE => "none",
+        _ => "",
+    }
+}
+
+/// One endpoint's identity: `{kind,unresolved}` for the stack, a shared
+/// receiver or nobody; for a program also `pid`, `comm`, `guid`, the
+/// user SID with its well-known name, and the service SID with the
+/// service's name resolved from the registry. `null` when absent.
+fn owner_json(o: &engine::Owner<'_>) -> String {
+    if o.kind == engine::LOCAL_ABSENT {
+        return "null".into();
+    }
+    let mut obj = Obj::new()
+        .str("kind", local_kind_name(o.kind))
+        .num("unresolved", o.unresolved as i64);
+    if o.kind == engine::LOCAL_PROGRAM {
+        let comm_end = o.comm.iter().position(|&b| b == 0).unwrap_or(o.comm.len());
+        obj = obj
+            .num("pid", o.pid as i64)
+            .str("comm", &String::from_utf8_lossy(&o.comm[..comm_end]))
+            .str("guid", &sid::guid_text(o.guid));
+        if let Some(user) = sid::sid_text(o.user) {
+            obj = obj.str("user", &user);
+            if let Some(name) = sid::well_known_name(&user) {
+                obj = obj.str("user_name", name);
+            }
+        }
+        if let Some(service) = sid::sid_text(o.service) {
+            obj = obj.str("service", &service);
+            if let Some(name) = sid::service_name(&service) {
+                obj = obj.str("service_name", &name);
+            }
+        }
+    }
+    obj.finish()
 }
 
 fn verdict_name(v: u8) -> &'static str {
@@ -369,6 +418,7 @@ fn flows_json(server: &Server) -> String {
         records.push(
             Obj::new()
                 .num("id", r.id as i128)
+                .raw("owners", &format!("[{},{}]", owner_json(&r.owner(0)), owner_json(&r.owner(1))))
                 .num("family", r.family as i64)
                 .num("protocol", r.protocol as i64)
                 .str("dir", if r.direction == 1 { "out" } else { "in" })
@@ -478,6 +528,43 @@ fn fmt_addr(family: u8, bytes: &[u8; 16]) -> String {
     }
 }
 
+/// What the machine is prepared to receive: `{"connected":1,"total":N,
+/// "records":[{family,protocol,addr,port,ifindex,reuseport,connected,
+/// v6only,owner}]}` — every listening TCP socket and bound UDP socket
+/// with the identity the kernel stamped on it, no packet required.
+fn listeners_json(server: &Server) -> String {
+    let dump = match server.engine.listeners() {
+        Ok(d) => d,
+        Err(err) => {
+            return Obj::new()
+                .num("connected", 0)
+                .str("error", &err)
+                .finish()
+        }
+    };
+    let mut records = Vec::with_capacity(dump.records.len());
+    for r in &dump.records {
+        records.push(
+            Obj::new()
+                .num("family", r.family as i64)
+                .num("protocol", r.protocol as i64)
+                .str("addr", &fmt_addr(r.family, &r.addr))
+                .num("port", r.port as i64)
+                .num("ifindex", r.ifindex as i64)
+                .num("reuseport", r.reuseport as i64)
+                .num("connected", r.connected as i64)
+                .num("v6only", r.v6only as i64)
+                .raw("owner", &owner_json(&r.owner()))
+                .finish(),
+        );
+    }
+    Obj::new()
+        .num("connected", 1)
+        .num("total", dump.total as i128)
+        .raw("records", &format!("[{}]", records.join(",")))
+        .finish()
+}
+
 fn verdict_json(ev: &PnpEvent) -> String {
     let verdict = verdict_name(ev.verdict);
     let seat = match ev.seat {
@@ -534,6 +621,8 @@ fn verdict_json(ev: &PnpEvent) -> String {
         .num("fx_reports", (ev.effects >> 16 & 0xff) as i64)
         .num("fx_prompts", (ev.effects >> 24 & 0xff) as i64)
         .str("by", &attributed)
+        .raw("local", &owner_json(&ev.local()))
+        .raw("remote", &owner_json(&ev.remote()))
         .finish()
 }
 

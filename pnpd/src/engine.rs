@@ -54,9 +54,77 @@ pub struct PnpEvent {
     pub effects: u32,
     pub attributed: [u8; 96],
     pub _pad1: u32,
+    /// The endpoints' identities (ABI 4): Flow-layer events only.
+    pub local_kind: u8,
+    pub remote_kind: u8,
+    pub local_unresolved: u8,
+    pub remote_unresolved: u8,
+    pub local_pid: i32,
+    pub remote_pid: i32,
+    pub local_guid: [u8; 16],
+    pub remote_guid: [u8; 16],
+    pub local_comm: [u8; 16],
+    pub remote_comm: [u8; 16],
+    pub local_user: [u8; SID_LEN],
+    pub remote_user: [u8; SID_LEN],
+    pub local_service: [u8; SERVICE_SID_LEN],
+    pub remote_service: [u8; SERVICE_SID_LEN],
+    pub _pad2: u32,
 }
 
-const _: () = assert!(std::mem::size_of::<PnpEvent>() == 176);
+const _: () = assert!(std::mem::size_of::<PnpEvent>() == 456);
+
+/// A SID's binary form, at its largest (`PEIOS_PNP_SID_LEN`).
+pub const SID_LEN: usize = 68;
+/// A per-service SID's binary form (`PEIOS_PNP_SERVICE_SID_LEN`).
+pub const SERVICE_SID_LEN: usize = 32;
+
+/// What stood at an endpoint (`PEIOS_PNP_EV_LOCAL_*`).
+pub const LOCAL_ABSENT: u8 = 0;
+pub const LOCAL_PROGRAM: u8 = 1;
+pub const LOCAL_KERNEL: u8 = 2;
+pub const LOCAL_SHARED: u8 = 3;
+pub const LOCAL_NONE: u8 = 4;
+
+/// One endpoint's identity as an event or a flow record carries it.
+#[derive(Clone, Copy)]
+pub struct Owner<'a> {
+    pub kind: u8,
+    pub unresolved: u8,
+    pub pid: i32,
+    pub guid: &'a [u8],
+    pub comm: &'a [u8],
+    pub user: &'a [u8],
+    pub service: &'a [u8],
+}
+
+impl PnpEvent {
+    /// The local end's identity.
+    pub fn local(&self) -> Owner<'_> {
+        Owner {
+            kind: self.local_kind,
+            unresolved: self.local_unresolved,
+            pid: self.local_pid,
+            guid: &self.local_guid,
+            comm: &self.local_comm,
+            user: &self.local_user,
+            service: &self.local_service,
+        }
+    }
+
+    /// The other end's identity (a loopback flow), else absent.
+    pub fn remote(&self) -> Owner<'_> {
+        Owner {
+            kind: self.remote_kind,
+            unresolved: self.remote_unresolved,
+            pid: self.remote_pid,
+            guid: &self.remote_guid,
+            comm: &self.remote_comm,
+            user: &self.remote_user,
+            service: &self.remote_service,
+        }
+    }
+}
 
 /// Mirror of `struct peios_pnp_status` (pkm/uapi/pkm/pnp.h).
 #[repr(C)]
@@ -103,7 +171,8 @@ pub struct PnpStatus {
     pub refusals_emitted: u64,
     pub refusals_bypassed: u64,
     pub teardowns_emitted: u64,
-    pub _reserved: [u64; 3],
+    pub identity_unresolved: u64,
+    pub _reserved: [u64; 2],
 }
 
 const _: () = assert!(std::mem::size_of::<PnpStatus>() == 352);
@@ -191,9 +260,94 @@ pub struct PnpFlowRec {
     pub _pad1: [u8; 4],
     pub tag_hash: [u64; FLOW_MAX_TAGS],
     pub tag_value: [u64; FLOW_MAX_TAGS],
+    /// The endpoints' identities per sentence slot (ABI 4), flattened at
+    /// the stride each constant names.
+    pub owner_kind: [u8; FLOW_SENTENCES],
+    pub owner_unresolved: [u8; FLOW_SENTENCES],
+    pub _pad2: [u8; 4],
+    pub owner_pid: [i32; FLOW_SENTENCES],
+    pub owner_guid: [u8; 16 * FLOW_SENTENCES],
+    pub owner_comm: [u8; 16 * FLOW_SENTENCES],
+    pub owner_user: [u8; SID_LEN * FLOW_SENTENCES],
+    pub owner_service: [u8; SERVICE_SID_LEN * FLOW_SENTENCES],
 }
 
-const _: () = assert!(std::mem::size_of::<PnpFlowRec>() == 288);
+const _: () = assert!(std::mem::size_of::<PnpFlowRec>() == 568);
+
+impl PnpFlowRec {
+    /// The identity recorded for a sentence slot.
+    pub fn owner(&self, slot: usize) -> Owner<'_> {
+        Owner {
+            kind: self.owner_kind[slot],
+            unresolved: self.owner_unresolved[slot],
+            pid: self.owner_pid[slot],
+            guid: &self.owner_guid[slot * 16..slot * 16 + 16],
+            comm: &self.owner_comm[slot * 16..slot * 16 + 16],
+            user: &self.owner_user[slot * SID_LEN..(slot + 1) * SID_LEN],
+            service: &self.owner_service[slot * SERVICE_SID_LEN..(slot + 1) * SERVICE_SID_LEN],
+        }
+    }
+}
+
+/// Mirror of `struct peios_pnp_listener_rec` (pkm/uapi/pkm/pnp.h): one
+/// socket prepared to receive, and by whom.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct PnpListenerRec {
+    pub family: u8,
+    pub protocol: u8,
+    pub reuseport: u8,
+    pub connected: u8,
+    pub v6only: u8,
+    pub owner_kind: u8,
+    pub owner_unresolved: u8,
+    pub _pad0: u8,
+    pub port: u16,
+    pub _pad1: u16,
+    pub ifindex: i32,
+    pub addr: [u8; 16],
+    pub owner_pid: i32,
+    pub owner_guid: [u8; 16],
+    pub owner_comm: [u8; 16],
+    pub owner_user: [u8; SID_LEN],
+    pub owner_service: [u8; SERVICE_SID_LEN],
+}
+
+const _: () = assert!(std::mem::size_of::<PnpListenerRec>() == 168);
+
+impl PnpListenerRec {
+    /// The socket's governing identity.
+    pub fn owner(&self) -> Owner<'_> {
+        Owner {
+            kind: self.owner_kind,
+            unresolved: self.owner_unresolved,
+            pid: self.owner_pid,
+            guid: &self.owner_guid,
+            comm: &self.owner_comm,
+            user: &self.owner_user,
+            service: &self.owner_service,
+        }
+    }
+}
+
+/// Mirror of `struct peios_pnp_listeners_query`.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct PnpListenersQuery {
+    pub buf: u64,
+    pub buf_len: u32,
+    pub count: u32,
+    pub total: u32,
+    pub _pad0: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<PnpListenersQuery>() == 24);
+
+/// One dump's worth of listeners plus how many the walk saw.
+pub struct ListenersDump {
+    pub records: Vec<PnpListenerRec>,
+    pub total: u32,
+}
 
 /// Mirror of `struct peios_pnp_flows_query`.
 #[repr(C)]
@@ -229,8 +383,15 @@ const IOC_FLOWS: libc::c_ulong = (3u64 << 30
     | (std::mem::size_of::<PnpFlowsQuery>() as u64) << 16
     | (b'N' as u64) << 8
     | 3) as libc::c_ulong;
-/// The kernel ABI this daemon speaks (the Flow layer slice).
-const ABI: u64 = 3;
+/// _IOWR('N', 4, struct peios_pnp_listeners_query): dir=3.
+const IOC_LISTENERS: libc::c_ulong = (3u64 << 30
+    | (std::mem::size_of::<PnpListenersQuery>() as u64) << 16
+    | (b'N' as u64) << 8
+    | 4) as libc::c_ulong;
+/// Most listeners one dump asks for (a machine has tens, not thousands).
+const LISTENERS_DUMP_MAX: usize = 1024;
+/// The kernel ABI this daemon speaks (the identity facts slice).
+const ABI: u64 = 4;
 /// Most cells one dump asks for (the kernel caps tables at 4096 keys;
 /// the viewer is a debugging surface, not a census).
 const COUNTERS_DUMP_MAX: usize = 4096;
@@ -387,6 +548,32 @@ impl Engine {
         }
         records.truncate(query.count as usize);
         Ok(FlowsDump {
+            records,
+            total: query.total,
+        })
+    }
+
+    /// The listeners dump: what the machine is prepared to receive.
+    pub fn listeners(&self) -> Result<ListenersDump, String> {
+        let fd = self
+            .inner
+            .lock()
+            .unwrap()
+            .dev_fd
+            .ok_or_else(|| "engine not connected".to_string())?;
+        let mut records: Vec<PnpListenerRec> =
+            vec![unsafe { std::mem::zeroed() }; LISTENERS_DUMP_MAX];
+        let mut query = PnpListenersQuery {
+            buf: records.as_mut_ptr() as u64,
+            buf_len: (records.len() * std::mem::size_of::<PnpListenerRec>()) as u32,
+            ..Default::default()
+        };
+        let rc = unsafe { libc::ioctl(fd, IOC_LISTENERS, &mut query as *mut PnpListenersQuery) };
+        if rc != 0 {
+            return Err(format!("LISTENERS ioctl: {}", std::io::Error::last_os_error()));
+        }
+        records.truncate(query.count as usize);
+        Ok(ListenersDump {
             records,
             total: query.total,
         })
