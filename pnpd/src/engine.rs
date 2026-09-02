@@ -102,7 +102,8 @@ pub struct PnpStatus {
     pub flow_uncached: u64,
     pub refusals_emitted: u64,
     pub refusals_bypassed: u64,
-    pub _reserved: [u64; 4],
+    pub teardowns_emitted: u64,
+    pub _reserved: [u64; 3],
 }
 
 const _: () = assert!(std::mem::size_of::<PnpStatus>() == 352);

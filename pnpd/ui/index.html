@@ -901,7 +901,7 @@ function setEngine(e) {
   $("e-flows").textContent = e.flow_judged || 0;
   $("e-flows-wrap").title = `Flow-layer evaluations (sentences written) — ${e.flow_cached || 0} packets answered by a cached sentence, ${e.flow_rejudged || 0} re-judged after a policy change, ${e.flow_expired || 0} re-judged at a time edge, ${e.flow_uncached || 0} evaluated per packet (no extension to hold a sentence)`;
   $("e-refusals").textContent = e.refusals_emitted || 0;
-  $("e-refusals-wrap").title = `REJECT answers built and sent (RST / ICMP) — ${e.refusals_bypassed || 0} of PNP's own refusals waved through its seats unjudged, ${e.reject_degraded || 0} REJECTs degraded to DROP (nothing to send)`;
+  $("e-refusals-wrap").title = `REJECT answers built and sent (RST / ICMP) — ${e.teardowns_emitted || 0} far-end resets tearing down refused established TCP connections, ${e.refusals_bypassed || 0} of PNP's own refusals waved through its seats unjudged, ${e.reject_degraded || 0} REJECTs degraded to DROP (nothing to send)`;
   const warn = $("ingest-warn");
   if (e.last_ingest_error && Number(e.last_ingest_error) !== 0) {
     warn.style.display = "block";

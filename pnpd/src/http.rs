@@ -303,6 +303,7 @@ fn engine_json(server: &Server) -> String {
         .num("flow_uncached", s.flow_uncached as i128)
         .num("refusals_emitted", s.refusals_emitted as i128)
         .num("refusals_bypassed", s.refusals_bypassed as i128)
+        .num("teardowns_emitted", s.teardowns_emitted as i128)
         .finish()
 }
 
