@@ -181,11 +181,15 @@ fn encode_value(name: &str, raw: &str) -> (ValueType, Vec<u8>) {
         Some(("int", rest)) => (Some("int"), rest),
         _ => (None, raw),
     };
-    let want_multi =
-        forced == Some("multi") || (forced.is_none() && (name == "Actions" || raw.contains(',')));
+    // Action expressions carry commas of their own — `TAG(x, Add)`,
+    // `COUNT(x, Length)`, `PROMPT(a, DROP)` — so only commas outside
+    // parentheses separate list elements.
+    let parts = split_top_level(raw);
+    let want_multi = forced == Some("multi")
+        || (forced.is_none() && (name == "Actions" || parts.len() > 1));
     if want_multi {
         let mut data = Vec::new();
-        for part in raw.split(',') {
+        for part in parts {
             let part = part.trim();
             if part.is_empty() {
                 continue;
@@ -209,6 +213,26 @@ fn encode_value(name: &str, raw: &str) -> (ValueType, Vec<u8>) {
     let mut data = raw.as_bytes().to_vec();
     data.push(0);
     (ValueType::SZ, data)
+}
+
+/// Splits on commas at parenthesis depth zero.
+fn split_top_level(raw: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (i, c) in raw.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                parts.push(&raw[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&raw[start..]);
+    parts
 }
 
 fn validate_segment(seg: &str) -> Result<(), String> {
@@ -358,5 +382,26 @@ mod tests {
         assert!(validate_segment("a\\b").is_err());
         assert!(validate_segment("a/b").is_err());
         assert!(validate_segment("").is_err());
+    }
+}
+
+#[cfg(test)]
+mod split_tests {
+    use super::*;
+
+    #[test]
+    fn actions_split_only_on_top_level_commas() {
+        assert_eq!(split_top_level("TAG(dnsq, Add)"), vec!["TAG(dnsq, Add)"]);
+        assert_eq!(
+            split_top_level("COUNT(dns),REPORT(3)"),
+            vec!["COUNT(dns)", "REPORT(3)"]
+        );
+        assert_eq!(
+            split_top_level("PROMPT(a, PROMPT(b, DROP)), PASS"),
+            vec!["PROMPT(a, PROMPT(b, DROP))", " PASS"]
+        );
+        let (ty, data) = encode_value("Actions", "TAG(dnsq, Add)");
+        assert_eq!(ty.0, ValueType::MULTI_SZ.0);
+        assert_eq!(data, b"TAG(dnsq, Add)\0\0".to_vec());
     }
 }
