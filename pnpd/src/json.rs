@@ -8,7 +8,10 @@ pub struct Obj {
 
 impl Obj {
     pub fn new() -> Obj {
-        Obj { out: String::from("{"), first: true }
+        Obj {
+            out: String::from("{"),
+            first: true,
+        }
     }
 
     fn key(&mut self, key: &str) {

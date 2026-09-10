@@ -41,7 +41,14 @@ pub fn guid_text(guid: &[u8]) -> String {
     if hex.len() != 32 {
         return hex;
     }
-    format!("{}-{}-{}-{}-{}", &hex[..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..])
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 /// The names of the principals an owner is likely to meet.
@@ -128,7 +135,13 @@ fn read_services() -> peios::Result<Vec<(String, String)>> {
 
 /// SHA-1, for the service-SID derivation only.
 fn sha1(data: &[u8]) -> [u8; 20] {
-    let mut h: [u32; 5] = [0x6745_2301, 0xEFCD_AB89, 0x98BA_DCFE, 0x1032_5476, 0xC3D2_E1F0];
+    let mut h: [u32; 5] = [
+        0x6745_2301,
+        0xEFCD_AB89,
+        0x98BA_DCFE,
+        0x1032_5476,
+        0xC3D2_E1F0,
+    ];
     let bit_len = (data.len() as u64).wrapping_mul(8);
     let mut msg = data.to_vec();
     msg.push(0x80);

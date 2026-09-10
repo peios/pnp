@@ -1,76 +1,269 @@
-# pnpd — the PNP observer and authoring daemon: wire tap, verdict-stream
-# consumer, policy viewer/editor, and web UI. Never in the enforcement path
-# (the kernel reads its own policy); pnpd watches and writes the registry.
-#
-# The libpeios bootstrap mirrors netd's: pkg-config rather than
-# PEIOS_LIB_DIR, so peios-sys does not bake a checkout-local rpath into a
-# shipped binary, and a synthesized peios.pc from the sibling trees when
-# libpeios-devel is not installed in the build root.
+# PNPd owns the hermetic build, production validation, split debug payloads,
+# and corresponding source for the PNP viewer service. Network access is
+# confined to build.vendor. The current privileged, unauthenticated TCP
+# architecture is deliberately preserved here, not approved for publication.
 
 out_dir = "out"
 
-[build]
-command = """
+[source_package]
+name = "dev.peios.pnpd-source"
+
+[build.vendor]
+command = '''
+set -eu
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+mkdir -p "$CARGO_HOME" "$PEKIT_OUT"
+
+PEIOS_RS_REV=f4309f78fbaa878a14429a5e07d778dba9ddfab7
+grep -F "peios-rs.git?rev=$PEIOS_RS_REV#$PEIOS_RS_REV" Cargo.lock >/dev/null
+cargo vendor --locked "$PEKIT_OUT/vendor" > "$PEKIT_OUT/cargo-config.toml"
+test -s "$PEKIT_OUT/cargo-config.toml"
+test -n "$(find "$PEKIT_OUT/vendor" -mindepth 1 -maxdepth 1 -type d -print -quit)"
+cp "$PEKIT_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
+
+# Cargo does not vendor path dependencies. Reject any mutable dependency
+# outside this release source tree before the network boundary closes.
+SRC=$(pwd -P)
+export SRC
+cargo metadata --locked --offline --format-version 1 |
+  python3 -c '
+import json, os, pathlib, sys
+metadata = json.load(sys.stdin)
+root = pathlib.Path(os.environ["SRC"]).resolve()
+members = set(metadata["workspace_members"])
+external = []
+for package in metadata["packages"]:
+    if package["id"] in members or package.get("source") is not None:
+        continue
+    manifest = pathlib.Path(package["manifest_path"]).resolve()
+    try:
+        manifest.relative_to(root)
+    except ValueError:
+        external.append(str(manifest))
+if external:
+    raise SystemExit("pnpd: mutable external Cargo dependencies:\n  " + "\n  ".join(sorted(external)))
+'
+'''
+
+[build.vendor.dependencies.peipkg]
+"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"org.mozilla.ca-certificates"     = "*"
+"org.python.python3"              = "*"
+
+[build.vendor.dependencies.apt]
+cargo           = "*"
+git             = "*"
+ca-certificates = "*"
+python3         = "*"
+findutils       = "*"
+grep            = "*"
+
+[build.main]
+needs = ["vendor"]
+command = '''
 set -eu
 set -o pipefail 2>/dev/null || true
 
-SRC="$(pwd)"
-REPO_ROOT="$(cd "$SRC/.." && pwd)"
+SRC=$(pwd -P)
+DEBUG_PREFIX=/usr/src/debug/dev.peios.pnpd-$PEKIT_VERSION
+DEBUG_ROOT=$PEKIT_OUT$DEBUG_PREFIX
+LICENSE_ROOT=$PEKIT_OUT/licenses
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
+mkdir -p "$CARGO_HOME"
+cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 
-for tool in cargo rustc gcc pkg-config; do
-  command -v "$tool" >/dev/null || { echo "missing required pnpd build tool: $tool" >&2; exit 1; }
+if test -d /usr/libexec/coreutils-build; then
+  export PATH=/usr/libexec/coreutils-build:$PATH
+fi
+
+for tool in cargo rustc gcc pkg-config python3 find sort cmp grep sed gzip readelf objcopy strip debugedit; do
+  command -v "$tool" >/dev/null || {
+    echo "pnpd: missing required build tool: $tool" >&2
+    exit 1
+  }
 done
 
 unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-
-if ! pkg-config --exists peios; then
-  LIBPEIOS_ROOT="$REPO_ROOT/libpeios"
-  # The BUILT pkm headers, not pkm/uapi (see authd/pekit.toml for why).
-  PKM_UAPI_ROOT="$REPO_ROOT/pkm/out/build/headers/usr/include"
-  [ -f "$LIBPEIOS_ROOT/Cargo.toml" ] || { echo "libpeios not found at $LIBPEIOS_ROOT" >&2; exit 1; }
-  [ -d "$LIBPEIOS_ROOT/include/peios" ] || { echo "libpeios headers not found" >&2; exit 1; }
-  [ -d "$PKM_UAPI_ROOT/pkm" ] || { echo "pkm UAPI headers not found at $PKM_UAPI_ROOT" >&2; exit 1; }
-  cargo build --release --locked --manifest-path "$LIBPEIOS_ROOT/Cargo.toml"
-  PC_DIR="$PEKIT_OUT/pkgconfig"
-  mkdir -p "$PC_DIR"
-  LIBPEIOS_VERSION="$(sed -n 's/^version = "\\([^"]*\\)".*/\\1/p' "$LIBPEIOS_ROOT/Cargo.toml" | head -1)"
-  {
-    printf 'prefix=%s\\n' "$LIBPEIOS_ROOT"
-    printf 'exec_prefix=${prefix}\\n'
-    printf 'libdir=%s/target/release\\n' "$LIBPEIOS_ROOT"
-    printf 'includedir=%s/include\\n' "$LIBPEIOS_ROOT"
-    printf '\\n'
-    printf 'Name: peios\\n'
-    printf 'Description: Peios userspace C ABI library (libpeios)\\n'
-    printf 'Version: %s\\n' "$LIBPEIOS_VERSION"
-    printf 'Libs: -L${libdir} -lpeios\\n'
-    printf 'Cflags: -I${includedir} -I%s\\n' "$PKM_UAPI_ROOT"
-  } > "$PC_DIR/peios.pc"
-  export PKG_CONFIG_PATH="$PC_DIR${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-fi
-
+test "$(pkg-config --modversion peios)" = 0.5.0 || {
+  echo "pnpd: dev.peios.libpeios-devel 0.5.0 is required" >&2
+  exit 1
+}
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 
-cargo build --release --locked --bin pnpd --target-dir "$PEKIT_OUT/target"
+cargo metadata --locked --offline --no-deps --format-version 1 |
+  python3 -c '
+import json, os, sys
+metadata = json.load(sys.stdin)
+members = set(metadata["workspace_members"])
+versions = sorted({p["version"] for p in metadata["packages"] if p["id"] in members})
+expected = os.environ["PEKIT_VERSION"]
+if versions != [expected]:
+    raise SystemExit(f"pnpd: workspace versions {versions!r} do not equal package version {expected!r}")
+'
 
-mkdir -p "$PEKIT_OUT/usr/sbin"
-install -m 0755 "$PEKIT_OUT/target/release/pnpd" "$PEKIT_OUT/usr/sbin/pnpd"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Dwarnings --remap-path-prefix=$PEKIT_WORKSPACE_ROOT=$DEBUG_PREFIX/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=$DEBUG_PREFIX/.build --remap-path-prefix=$SRC=$DEBUG_PREFIX --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=$DEBUG_PREFIX/vendor"
 
-# Seeds are offered, not applied: an image opts in with [registry] autoapply.
-mkdir -p "$PEKIT_OUT/usr/share/regim"
+cargo test --release --workspace --locked --offline --target-dir "$PEKIT_OUT/tests"
+for target in target-a target-b; do
+  CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
+    cargo build --release --workspace --locked --offline \
+      --target-dir "$PEKIT_OUT/$target"
+done
+cmp "$PEKIT_OUT/target-a/release/pnpd" "$PEKIT_OUT/target-b/release/pnpd"
+
+mkdir -p "$PEKIT_OUT/usr/sbin" "$PEKIT_OUT/usr/share/regim" \
+         "$PEKIT_OUT/usr/share/man/man8"
+install -m 0755 "$PEKIT_OUT/target-a/release/pnpd" "$PEKIT_OUT/usr/sbin/pnpd"
 install -m 0644 "$SRC/registry.d/pnpd-service.reg" "$PEKIT_OUT/usr/share/regim/pnpd-service.reg"
-"""
+gzip -9n < "$SRC/man/pnpd.8" > "$PEKIT_OUT/usr/share/man/man8/pnpd.8.gz"
 
-[build.dependencies.peipkg]
-cargo = "*"
-rust = "*"
-gcc = "*"
-pkgconf-pkg-config = "*"
-libpeios-devel = "*"
-kernel-headers = "*"
+python3 "$SRC/tools/collect-rust-metadata.py" --licence-root "$LICENSE_ROOT"
+test -s "$LICENSE_ROOT/crate-licenses.tsv"
+
+debug_list=$PEKIT_OUT/.debug-pnpd
+elf=$PEKIT_OUT/usr/sbin/pnpd
+debugedit -b "$SRC" -d "$DEBUG_PREFIX" -l "$debug_list" -n "$elf"
+build_id=$(readelf -n "$elf" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
+test -n "$build_id"
+first=$(printf %s "$build_id" | cut -c1-2)
+rest=$(printf %s "$build_id" | cut -c3-)
+debug=$PEKIT_OUT/debug/pnpd/usr/lib/debug/.build-id/$first/$rest.debug
+mkdir -p "$(dirname "$debug")" "$DEBUG_ROOT"
+objcopy --only-keep-debug "$elf" "$debug"
+strip --strip-unneeded "$elf"
+objcopy --add-gnu-debuglink="$debug" "$elf"
+
+tr '\0' '\n' < "$debug_list" | LC_ALL=C sort -u |
+while IFS= read -r source; do
+  test -n "$source" || continue
+  case "$source" in */) continue ;; esac
+  case "$source" in
+    "$DEBUG_PREFIX"/vendor/*)
+      relative=${source#"$DEBUG_PREFIX"/}
+      origin=$PEKIT_VENDOR_OUT/$relative
+      ;;
+    "$DEBUG_PREFIX"/*)
+      relative=${source#"$DEBUG_PREFIX"/}
+      origin=$SRC/$relative
+      ;;
+    vendor/*)
+      relative=$source
+      origin=$PEKIT_VENDOR_OUT/$source
+      ;;
+    *)
+      relative=$source
+      origin=$SRC/$source
+      ;;
+  esac
+  test -f "$origin" || continue
+  mkdir -p "$DEBUG_ROOT/$(dirname "$relative")"
+  cp "$origin" "$DEBUG_ROOT/$relative"
+done
+rm -f "$debug_list"
+test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
+
+# Installed payload checks inventory the existing Experimental service; they
+# deliberately do not endorse its pending security architecture.
+set +e
+"$elf" --help > "$PEKIT_OUT/pnpd-help" 2>&1
+help_status=$?
+set -e
+test "$help_status" = 2
+grep -Fx 'usage: pnpd [--port N] [--ring N]' "$PEKIT_OUT/pnpd-help" >/dev/null
+rm -f "$PEKIT_OUT/pnpd-help"
+gzip -t "$PEKIT_OUT/usr/share/man/man8/pnpd.8.gz"
+grep -aF '<b>PNP</b>' "$elf" >/dev/null
+grep -aF '/api/policy/set' "$elf" >/dev/null
+
+python3 - "$PEKIT_OUT" <<'PY'
+import json, pathlib, sys
+root = pathlib.Path(sys.argv[1])
+service = json.loads((root / "usr/share/regim/pnpd-service.reg").read_text())
+values = {
+    value["name"]: value["data"]
+    for key in service["keys"]
+    if key["path"] == r"Machine\System\Services\pnpd"
+    for value in key["values"]
+}
+assert values["ImagePath"] == "/usr/sbin/pnpd"
+assert values["Identity"] == "SYSTEM"
+assert values["Readiness"] == 0
+assert values["RestartPolicy"] == 2
+assert values["ErrorControl"] == 0
+PY
+
+readelf -h "$elf" | grep -Eq 'Type:[[:space:]]+DYN'
+readelf -lW "$elf" | grep -q 'GNU_RELRO'
+readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RW[[:space:]]'
+! readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RWE'
+readelf -dW "$elf" | grep -q 'BIND_NOW'
+readelf -dW "$elf" | grep -q 'RELR'
+readelf -dW "$elf" | grep -Eq 'FLAGS_1.*PIE'
+readelf -dW "$elf" | grep -Fq 'Shared library: [libpeios.so.0]'
+readelf -dW "$elf" | grep -Fq 'Shared library: [libgcc_s.so.1]'
+readelf -dW "$elf" | grep -Fq 'Shared library: [libc.so.6]'
+! readelf -dW "$elf" | grep -Eq '(RPATH|RUNPATH|TEXTREL)'
+! readelf -SW "$elf" | grep -q '\.debug_info'
+test -s "$debug"
+readelf -SW "$debug" | grep -q '\.debug_info'
+test "$(readelf -n "$debug" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" = "$build_id"
+for forbidden in "$SRC" "$PEKIT_VENDOR_OUT" "$PEKIT_OUT_BASE" "$PEKIT_WORKSPACE_ROOT"; do
+  ! grep -aF "$forbidden" "$elf" "$debug" >/dev/null
+done
+'''
+
+[build.main.dependencies.peipkg]
+"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"org.gnu.gzip"                    = "*"
+"org.python.python3"              = "*"
+"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.pkgconf.pkgconf"             = "*"
+"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+
+[build.main.dependencies.apt]
+dash         = "*"
+coreutils    = "*"
+findutils    = "*"
+grep         = "*"
+sed          = "*"
+gzip         = "*"
+cargo        = "*"
+rustc        = "*"
+gcc          = "*"
+binutils     = "*"
+debugedit    = "*"
+python3      = "*"
+libclang-dev = "*"
+pkgconf      = "*"
 
 [test]
-command = "cargo test --workspace"
+needs = ["vendor"]
+command = '''
+set -eu
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+mkdir -p "$CARGO_HOME"
+cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
+unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
+test "$(pkg-config --modversion peios)" = 0.5.0
+export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
+export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Dwarnings"
+cargo test --workspace --locked --offline
+'''
+
+[test.dependencies.peipkg]
+"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.pkgconf.pkgconf"             = "*"
+"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+
+[test.dependencies.apt]
+coreutils    = "*"
+cargo        = "*"
+rustc        = "*"
+gcc          = "*"
+libclang-dev = "*"
+pkgconf      = "*"
 
 [clean]
-command = "cargo clean"
+command = "rm -rf out"

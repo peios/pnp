@@ -1,0 +1,12 @@
+[package]
+name         = "dev.peios.pnpd-debugsource"
+architecture = "x86_64"
+description  = "Exact debug sources for the PNP observer service"
+
+[dependencies]
+"dev.peios.pnpd-debuginfo" = "= {{version}}-2"
+
+[files]
+"@source:LICENSE"   = "usr/share/licenses/dev.peios.pnpd-debugsource/LICENSE"
+":licenses/**"      = "usr/share/licenses/dev.peios.pnpd-debugsource/third-party"
+":usr/src/debug/**" = "usr/src/debug"

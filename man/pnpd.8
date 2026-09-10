@@ -1,0 +1,43 @@
+.TH PNPD 8 "September 2026" "pnpd 0.5.0" "Peios System Administration"
+.SH NAME
+pnpd \- observe and author Peios Network Policy
+.SH SYNOPSIS
+.B pnpd
+.RB [ \-\-port " " N ]
+.RB [ \-\-ring " " N ]
+.SH DESCRIPTION
+.B pnpd
+captures packets, consumes the Peios Network Policy verdict stream, and serves
+the PNP viewer and policy-authoring interface over HTTP.
+It is an observation and authoring service; policy enforcement remains in the
+kernel.
+.PP
+The service currently belongs to the Experimental edition.
+Its HTTP interface has no authentication boundary and must not be exposed to
+an untrusted network.
+.SH OPTIONS
+.TP
+.BI \-\-port " N"
+Listen on TCP port
+.IR N .
+The default is 8081.
+.TP
+.BI \-\-ring " N"
+Keep at most
+.I N
+captured packets in the in-memory history ring.
+The default is 4096.
+.SH FILES
+.TP
+.I /dev/peios-pnp
+Kernel verdict stream and query interface.
+.TP
+.I Machine\\System\\Network\\Rules
+Registry policy tree read and edited by the viewer.
+.SH SECURITY
+The current development service runs as SYSTEM, opens a raw packet socket,
+listens on all addresses, and permits policy mutation through its HTTP
+interface without authentication.
+Keep TCP port 8081 unreachable from untrusted networks.
+.SH SEE ALSO
+.BR netd (8)

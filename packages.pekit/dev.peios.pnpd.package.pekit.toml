@@ -1,0 +1,26 @@
+# Experimental PNP observer/editor service. The package preserves the current
+# SYSTEM identity and port-8081 surface; publication remains blocked on the
+# separate product/security decision about privilege and authentication.
+side_effects = ["man-db"]
+
+[package]
+name        = "dev.peios.pnpd"
+description = "Experimental Peios Network Policy observer and editor"
+
+[provides]
+pnpd = "{{version}}-2"
+
+[replaces]
+pnpd = "<= {{version}}-1"
+
+[dependencies]
+"dev.peios.libpeios" = "= 0.5.0-1"
+"org.gnu.glibc"      = "*"
+"org.gnu.gcc-libgcc" = "*"
+
+[files]
+"@source:LICENSE"                   = "usr/share/licenses/dev.peios.pnpd/LICENSE"
+":licenses/**"                      = "usr/share/licenses/dev.peios.pnpd/third-party"
+":usr/sbin/pnpd"                    = "usr/sbin/pnpd"
+":usr/share/regim/pnpd-service.reg" = "usr/share/regim/pnpd-service.reg"
+":usr/share/man/man8/pnpd.8.gz"     = "usr/share/man/man8/pnpd.8.gz"

@@ -185,8 +185,8 @@ fn encode_value(name: &str, raw: &str) -> (ValueType, Vec<u8>) {
     // `COUNT(x, Length)`, `PROMPT(a, DROP)` — so only commas outside
     // parentheses separate list elements.
     let parts = split_top_level(raw);
-    let want_multi = forced == Some("multi")
-        || (forced.is_none() && (name == "Actions" || parts.len() > 1));
+    let want_multi =
+        forced == Some("multi") || (forced.is_none() && (name == "Actions" || parts.len() > 1));
     if want_multi {
         let mut data = Vec::new();
         for part in parts {
@@ -283,13 +283,12 @@ pub fn set_rule(path: &[String], values: &[(String, String)]) -> Result<(), Stri
     }
 
     // Replace semantics for the rule's own values.
-    let existing = key.query_values_batch(Some(&txn)).map_err(|e| e.to_string())?;
+    let existing = key
+        .query_values_batch(Some(&txn))
+        .map_err(|e| e.to_string())?;
     for record in existing {
         let name = record.name.clone();
-        if !values
-            .iter()
-            .any(|(n, _)| n.as_bytes() == name.as_slice())
-        {
+        if !values.iter().any(|(n, _)| n.as_bytes() == name.as_slice()) {
             key.delete_value(&name, None, Some(&txn))
                 .map_err(|e| e.to_string())?;
         }
@@ -318,9 +317,7 @@ fn delete_recursive(key: &Key, txn: &Transaction, depth: usize) -> Result<(), St
         let child = Key::open(
             Some(key),
             &child_name,
-            KeyAccess::QUERY_VALUE
-                | KeyAccess::ENUMERATE_SUB_KEYS
-                | KeyAccess::DELETE,
+            KeyAccess::QUERY_VALUE | KeyAccess::ENUMERATE_SUB_KEYS | KeyAccess::DELETE,
             OpenFlags::empty(),
         )
         .map_err(|e| e.to_string())?;
@@ -344,9 +341,7 @@ pub fn delete_rule(path: &[String]) -> Result<(), String> {
         key = Key::open(
             Some(&key),
             seg,
-            KeyAccess::QUERY_VALUE
-                | KeyAccess::ENUMERATE_SUB_KEYS
-                | KeyAccess::DELETE,
+            KeyAccess::QUERY_VALUE | KeyAccess::ENUMERATE_SUB_KEYS | KeyAccess::DELETE,
             OpenFlags::empty(),
         )
         .map_err(|e| e.to_string())?;

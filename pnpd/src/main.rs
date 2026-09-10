@@ -12,8 +12,8 @@ mod http;
 mod json;
 mod log;
 mod policy;
-mod sid;
 mod ring;
+mod sid;
 
 use std::net::TcpListener;
 use std::sync::atomic::AtomicU64;
@@ -69,7 +69,9 @@ fn main() {
             std::process::exit(1);
         }
     };
-    log::info(&format!("wire tap up, serving on port {port}, ring {ring_capacity}"));
+    log::info(&format!(
+        "wire tap up, serving on port {port}, ring {ring_capacity}"
+    ));
     notify_ready();
 
     let server = Arc::new(http::Server {

@@ -11,12 +11,12 @@ use std::sync::mpsc::TryRecvError;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::sid;
 use crate::capture::CaptureStats;
 use crate::engine::{self, Engine, PnpEvent};
 use crate::json::{self, Obj};
 use crate::policy;
 use crate::ring::{Packet, Ring};
+use crate::sid;
 
 const UI: &str = include_str!("../ui/index.html");
 
@@ -149,7 +149,12 @@ fn policy_mutation(stream: TcpStream, query: &str, is_set: bool) -> std::io::Res
         Ok(()) => respond(stream, "200 OK", "application/json", b"{\"ok\":true}"),
         Err(err) => {
             let body = Obj::new().str("error", &err).finish();
-            respond(stream, "400 Bad Request", "application/json", body.as_bytes())
+            respond(
+                stream,
+                "400 Bad Request",
+                "application/json",
+                body.as_bytes(),
+            )
         }
     }
 }
@@ -169,8 +174,7 @@ fn url_decode(s: &str) -> String {
         match bytes[i] {
             b'%' => {
                 if let Some(hex) = bytes.get(i + 1..i + 3) {
-                    if let Ok(v) =
-                        u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("zz"), 16)
+                    if let Ok(v) = u8::from_str_radix(std::str::from_utf8(hex).unwrap_or("zz"), 16)
                     {
                         out.push(v);
                         i += 3;
@@ -256,9 +260,18 @@ fn status_json(server: &Server) -> String {
     Obj::new()
         .str("daemon", concat!("pnpd ", env!("CARGO_PKG_VERSION")))
         .num("uptime_s", server.started.elapsed().as_secs() as i64)
-        .num("captured", server.stats.captured.load(Ordering::Relaxed) as i128)
-        .num("dropped", server.stats.dropped.load(Ordering::Relaxed) as i128)
-        .num("suppressed", server.stats.suppressed.load(Ordering::Relaxed) as i128)
+        .num(
+            "captured",
+            server.stats.captured.load(Ordering::Relaxed) as i128,
+        )
+        .num(
+            "dropped",
+            server.stats.dropped.load(Ordering::Relaxed) as i128,
+        )
+        .num(
+            "suppressed",
+            server.stats.suppressed.load(Ordering::Relaxed) as i128,
+        )
         .num("ring_capacity", server.ring.capacity() as i128)
         .finish()
 }
@@ -375,7 +388,11 @@ fn sentence_json(r: &engine::PnpFlowRec, slot: usize) -> String {
         .str(
             "reject_kind",
             if verdict == engine::VERDICT_REJECT {
-                if r.sentence_reject_kind[slot] == 1 { "Prohibited" } else { "Refused" }
+                if r.sentence_reject_kind[slot] == 1 {
+                    "Prohibited"
+                } else {
+                    "Refused"
+                }
             } else {
                 ""
             },
@@ -394,12 +411,7 @@ fn sentence_json(r: &engine::PnpFlowRec, slot: usize) -> String {
 fn flows_json(server: &Server) -> String {
     let dump = match server.engine.flows() {
         Ok(d) => d,
-        Err(err) => {
-            return Obj::new()
-                .num("connected", 0)
-                .str("error", &err)
-                .finish()
-        }
+        Err(err) => return Obj::new().num("connected", 0).str("error", &err).finish(),
     };
     let mut records = Vec::with_capacity(dump.records.len());
     for r in &dump.records {
@@ -418,7 +430,10 @@ fn flows_json(server: &Server) -> String {
         records.push(
             Obj::new()
                 .num("id", r.id as i128)
-                .raw("owners", &format!("[{},{}]", owner_json(&r.owner(0)), owner_json(&r.owner(1))))
+                .raw(
+                    "owners",
+                    &format!("[{},{}]", owner_json(&r.owner(0)), owner_json(&r.owner(1))),
+                )
                 .num("family", r.family as i64)
                 .num("protocol", r.protocol as i64)
                 .str("dir", if r.direction == 1 { "out" } else { "in" })
@@ -470,12 +485,7 @@ fn keyspec_json(keyspec: u8) -> String {
 fn counters_json(server: &Server) -> String {
     let dump = match server.engine.counters() {
         Ok(d) => d,
-        Err(err) => {
-            return Obj::new()
-                .num("connected", 0)
-                .str("error", &err)
-                .finish()
-        }
+        Err(err) => return Obj::new().num("connected", 0).str("error", &err).finish(),
     };
     let mut records = Vec::with_capacity(dump.records.len());
     for r in &dump.records {
@@ -535,12 +545,7 @@ fn fmt_addr(family: u8, bytes: &[u8; 16]) -> String {
 fn listeners_json(server: &Server) -> String {
     let dump = match server.engine.listeners() {
         Ok(d) => d,
-        Err(err) => {
-            return Obj::new()
-                .num("connected", 0)
-                .str("error", &err)
-                .finish()
-        }
+        Err(err) => return Obj::new().num("connected", 0).str("error", &err).finish(),
     };
     let mut records = Vec::with_capacity(dump.records.len());
     for r in &dump.records {
@@ -593,13 +598,20 @@ fn verdict_json(ev: &PnpEvent) -> String {
         .str(
             "reject_kind",
             if ev.verdict == engine::VERDICT_REJECT {
-                if ev.reject_kind == 1 { "Prohibited" } else { "Refused" }
+                if ev.reject_kind == 1 {
+                    "Prohibited"
+                } else {
+                    "Refused"
+                }
             } else {
                 ""
             },
         )
         .num("backstop", (ev.flags & engine::EV_F_BACKSTOP != 0) as i64)
-        .num("fail_closed", (ev.flags & engine::EV_F_FAIL_CLOSED != 0) as i64)
+        .num(
+            "fail_closed",
+            (ev.flags & engine::EV_F_FAIL_CLOSED != 0) as i64,
+        )
         .num(
             "reject_degraded",
             (ev.flags & engine::EV_F_REJECT_DEGRADED != 0) as i64,

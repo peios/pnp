@@ -1,10 +1,12 @@
+# Shared production metadata. Revision 2 follows the unqualified development
+# package and introduces the immutable Cargo graph, exact source/debug
+# artifacts, deterministic builds, a manual, and fail-closed validation.
+
 format = "peipkg"
 
 [package]
-# NOTE: 0.2.0-1 was republished in place with the JSON fix (dev keyring,
-# same revision, new bits — hygiene sin confessed). 0.3.0 speaks kernel
-# ABI 2 (machinery slice); revisions restart at -1. 0.5.0 speaks kernel
-# ABI 4 (the identity facts); revisions restart at -1.
-version      = "{{version}}-1"
-architecture = "x86_64"
-license      = "MIT"
+version       = "{{version}}-2"
+architecture  = "x86_64"
+license       = "MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND Unicode-3.0 AND Unlicense"
+license_class = "free"
+homepage      = "https://peios.org"

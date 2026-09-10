@@ -1,0 +1,11 @@
+[package]
+name        = "dev.peios.pnpd-debuginfo"
+description = "Debugging symbols for the PNP observer service"
+
+[dependencies]
+"dev.peios.pnpd" = "= {{version}}-2"
+
+[files]
+"@source:LICENSE"              = "usr/share/licenses/dev.peios.pnpd-debuginfo/LICENSE"
+":licenses/**"                 = "usr/share/licenses/dev.peios.pnpd-debuginfo/third-party"
+":debug/pnpd/usr/lib/debug/**" = "usr/lib/debug"

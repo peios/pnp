@@ -76,7 +76,13 @@ impl Capture {
                 std::mem::size_of::<libc::c_int>() as libc::socklen_t,
             );
         }
-        Ok(Capture { fd, ring, stats, own_port, names: HashMap::new() })
+        Ok(Capture {
+            fd,
+            ring,
+            stats,
+            own_port,
+            names: HashMap::new(),
+        })
     }
 
     /// Receive loop; runs on its own thread for the life of the daemon.
@@ -115,7 +121,10 @@ impl Capture {
                 continue;
             }
 
-            let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+            let mut ts = libc::timespec {
+                tv_sec: 0,
+                tv_nsec: 0,
+            };
             unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, &mut ts) };
 
             let ifindex = addr.sll_ifindex as u32;
@@ -144,7 +153,10 @@ impl Capture {
 
     /// PACKET_STATISTICS resets on read, so accumulate into our counter.
     fn harvest_kernel_drops(&self) {
-        let mut st = TpacketStats { tp_packets: 0, tp_drops: 0 };
+        let mut st = TpacketStats {
+            tp_packets: 0,
+            tp_drops: 0,
+        };
         let mut len = std::mem::size_of::<TpacketStats>() as libc::socklen_t;
         let r = unsafe {
             libc::getsockopt(
@@ -156,7 +168,9 @@ impl Capture {
             )
         };
         if r == 0 && st.tp_drops > 0 {
-            self.stats.dropped.fetch_add(st.tp_drops as u64, Ordering::Relaxed);
+            self.stats
+                .dropped
+                .fetch_add(st.tp_drops as u64, Ordering::Relaxed);
         }
     }
 
@@ -249,7 +263,10 @@ mod tests {
         assert!(is_own_flow(&tcp4_frame(7370, 40000), 7370));
         assert!(is_own_flow(&tcp4_frame(40000, 7370), 7370));
         assert!(!is_own_flow(&tcp4_frame(80, 40000), 7370));
-        assert!(!is_own_flow(&[0u8; 10], 7370), "runt frames are not own flow");
+        assert!(
+            !is_own_flow(&[0u8; 10], 7370),
+            "runt frames are not own flow"
+        );
     }
 
     #[test]

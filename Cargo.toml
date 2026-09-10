@@ -4,6 +4,6 @@ members = ["pnpd"]
 
 [workspace.dependencies]
 libc = "0.2"
-# The Peios userspace API — the safe wrapper over libpeios' C ABI, path-dep'd
-# as a sibling checkout like every Peios daemon (netd, resolvd, atriumd).
-peios = { path = "../peios-rs/peios" }
+# The reviewed libpeios-0.5-compatible userspace API. Releases must never
+# depend on whichever sibling checkout happens to be present at build time.
+peios = { git = "https://github.com/peios/peios-rs.git", rev = "f4309f78fbaa878a14429a5e07d778dba9ddfab7", package = "peios" }

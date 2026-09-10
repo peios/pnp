@@ -81,16 +81,25 @@ impl Ring {
         // A subscriber that cannot keep up loses its stream rather than
         // stalling the capture: try_send, and on a full channel the client is
         // cut off (it can rejoin and see the gap by sequence number).
-        inner.subscribers.retain(|tx| match tx.try_send(packet.clone()) {
-            Ok(()) => true,
-            Err(mpsc::TrySendError::Full(_)) | Err(mpsc::TrySendError::Disconnected(_)) => false,
-        });
+        inner
+            .subscribers
+            .retain(|tx| match tx.try_send(packet.clone()) {
+                Ok(()) => true,
+                Err(mpsc::TrySendError::Full(_)) | Err(mpsc::TrySendError::Disconnected(_)) => {
+                    false
+                }
+            });
     }
 
     /// Everything currently held with seq > since, oldest first.
     pub fn since(&self, since: u64) -> Vec<Arc<Packet>> {
         let inner = self.inner.lock().unwrap();
-        inner.packets.iter().filter(|p| p.seq > since).cloned().collect()
+        inner
+            .packets
+            .iter()
+            .filter(|p| p.seq > since)
+            .cloned()
+            .collect()
     }
 
     pub fn subscribe(&self) -> mpsc::Receiver<Arc<Packet>> {

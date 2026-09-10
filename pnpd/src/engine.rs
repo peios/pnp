@@ -369,25 +369,21 @@ pub struct FlowsDump {
 }
 
 /// _IOR('N', 1, struct peios_pnp_status): dir=2, size, type 'N', nr 1.
-const IOC_STATUS: libc::c_ulong = (2u64 << 30
-    | (std::mem::size_of::<PnpStatus>() as u64) << 16
-    | (b'N' as u64) << 8
-    | 1) as libc::c_ulong;
+const IOC_STATUS: libc::c_ulong =
+    (2u64 << 30 | (std::mem::size_of::<PnpStatus>() as u64) << 16 | (b'N' as u64) << 8 | 1)
+        as libc::c_ulong;
 /// _IOWR('N', 2, struct peios_pnp_counters_query): dir=3.
-const IOC_COUNTERS: libc::c_ulong = (3u64 << 30
-    | (std::mem::size_of::<PnpCountersQuery>() as u64) << 16
-    | (b'N' as u64) << 8
-    | 2) as libc::c_ulong;
+const IOC_COUNTERS: libc::c_ulong =
+    (3u64 << 30 | (std::mem::size_of::<PnpCountersQuery>() as u64) << 16 | (b'N' as u64) << 8 | 2)
+        as libc::c_ulong;
 /// _IOWR('N', 3, struct peios_pnp_flows_query): dir=3.
-const IOC_FLOWS: libc::c_ulong = (3u64 << 30
-    | (std::mem::size_of::<PnpFlowsQuery>() as u64) << 16
-    | (b'N' as u64) << 8
-    | 3) as libc::c_ulong;
+const IOC_FLOWS: libc::c_ulong =
+    (3u64 << 30 | (std::mem::size_of::<PnpFlowsQuery>() as u64) << 16 | (b'N' as u64) << 8 | 3)
+        as libc::c_ulong;
 /// _IOWR('N', 4, struct peios_pnp_listeners_query): dir=3.
-const IOC_LISTENERS: libc::c_ulong = (3u64 << 30
-    | (std::mem::size_of::<PnpListenersQuery>() as u64) << 16
-    | (b'N' as u64) << 8
-    | 4) as libc::c_ulong;
+const IOC_LISTENERS: libc::c_ulong =
+    (3u64 << 30 | (std::mem::size_of::<PnpListenersQuery>() as u64) << 16 | (b'N' as u64) << 8 | 4)
+        as libc::c_ulong;
 /// Most listeners one dump asks for (a machine has tens, not thousands).
 const LISTENERS_DUMP_MAX: usize = 1024;
 /// The kernel ABI this daemon speaks (the identity facts slice).
@@ -482,9 +478,12 @@ impl Engine {
         }
         inner.events.push_back(ev);
         // Slow or gone subscribers are cut off; they rejoin by seq.
-        inner
-            .subscribers
-            .retain(|tx| !matches!(tx.try_send(ev), Err(std::sync::mpsc::TrySendError::Disconnected(_))));
+        inner.subscribers.retain(|tx| {
+            !matches!(
+                tx.try_send(ev),
+                Err(std::sync::mpsc::TrySendError::Disconnected(_))
+            )
+        });
     }
 
     fn set_status(&self, status: PnpStatus, connected: bool) {
@@ -518,7 +517,10 @@ impl Engine {
         };
         let rc = unsafe { libc::ioctl(fd, IOC_COUNTERS, &mut query as *mut PnpCountersQuery) };
         if rc != 0 {
-            return Err(format!("COUNTERS ioctl: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "COUNTERS ioctl: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         records.truncate(query.count as usize);
         Ok(CountersDump {
@@ -535,8 +537,7 @@ impl Engine {
             .unwrap()
             .dev_fd
             .ok_or_else(|| "engine not connected".to_string())?;
-        let mut records: Vec<PnpFlowRec> =
-            vec![unsafe { std::mem::zeroed() }; FLOWS_DUMP_MAX];
+        let mut records: Vec<PnpFlowRec> = vec![unsafe { std::mem::zeroed() }; FLOWS_DUMP_MAX];
         let mut query = PnpFlowsQuery {
             buf: records.as_mut_ptr() as u64,
             buf_len: (records.len() * std::mem::size_of::<PnpFlowRec>()) as u32,
@@ -570,7 +571,10 @@ impl Engine {
         };
         let rc = unsafe { libc::ioctl(fd, IOC_LISTENERS, &mut query as *mut PnpListenersQuery) };
         if rc != 0 {
-            return Err(format!("LISTENERS ioctl: {}", std::io::Error::last_os_error()));
+            return Err(format!(
+                "LISTENERS ioctl: {}",
+                std::io::Error::last_os_error()
+            ));
         }
         records.truncate(query.count as usize);
         Ok(ListenersDump {
@@ -633,13 +637,7 @@ pub fn run(engine: Arc<Engine>) {
 
 fn refresh_status(file: &File, engine: &Arc<Engine>) -> Result<u64, String> {
     let mut status = PnpStatus::default();
-    let rc = unsafe {
-        libc::ioctl(
-            file.as_raw_fd(),
-            IOC_STATUS,
-            &mut status as *mut PnpStatus,
-        )
-    };
+    let rc = unsafe { libc::ioctl(file.as_raw_fd(), IOC_STATUS, &mut status as *mut PnpStatus) };
     if rc != 0 {
         return Err(format!("errno {}", std::io::Error::last_os_error()));
     }
