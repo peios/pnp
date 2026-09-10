@@ -7,11 +7,7 @@ side_effects = ["man-db"]
 name        = "dev.peios.pnpd"
 description = "Experimental Peios Network Policy observer and editor"
 
-[provides]
-pnpd = "{{version}}-2"
 
-[replaces]
-pnpd = "<= {{version}}-1"
 
 [dependencies]
 "dev.peios.libpeios" = "= 0.5.0-1"

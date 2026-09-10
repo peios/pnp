@@ -1,5 +1,4 @@
-# Shared production metadata. Revision 2 follows the unqualified development
-# package and introduces the immutable Cargo graph, exact source/debug
+# Shared production metadata. Revision 2 introduces the immutable Cargo graph, exact source/debug
 # artifacts, deterministic builds, a manual, and fail-closed validation.
 
 format = "peipkg"
