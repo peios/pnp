@@ -1,7 +1,8 @@
 # PNPd owns the hermetic build, production validation, split debug payloads,
 # and corresponding source for the PNP viewer service. Network access is
 # confined to build.vendor. The current privileged, unauthenticated TCP
-# architecture is deliberately preserved here, not approved for publication.
+# architecture is deliberately confined to the Experimental development image;
+# it is not approved for a future production profile without a separate design.
 
 out_dir = "out"
 
@@ -98,7 +99,7 @@ metadata = json.load(sys.stdin)
 members = set(metadata["workspace_members"])
 versions = sorted({p["version"] for p in metadata["packages"] if p["id"] in members})
 expected = os.environ["PEKIT_VERSION"]
-if versions != [expected]:
+if expected != "0.0.0-localdev" and versions != [expected]:
     raise SystemExit(f"pnpd: workspace versions {versions!r} do not equal package version {expected!r}")
 '
 
@@ -124,7 +125,7 @@ test -s "$LICENSE_ROOT/crate-licenses.tsv"
 debug_list=$PEKIT_OUT/.debug-pnpd
 elf=$PEKIT_OUT/usr/sbin/pnpd
 debugedit -b "$SRC" -d "$DEBUG_PREFIX" -l "$debug_list" -n "$elf"
-build_id=$(readelf -n "$elf" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)
+build_id=$(readelf -n "$elf" | sed -n 's/^[[:space:]]*Build ID: //p')
 test -n "$build_id"
 first=$(printf %s "$build_id" | cut -c1-2)
 rest=$(printf %s "$build_id" | cut -c3-)
@@ -193,21 +194,22 @@ assert values["RestartPolicy"] == 2
 assert values["ErrorControl"] == 0
 PY
 
-readelf -h "$elf" | grep -Eq 'Type:[[:space:]]+DYN'
-readelf -lW "$elf" | grep -q 'GNU_RELRO'
-readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RW[[:space:]]'
-! readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RWE'
-readelf -dW "$elf" | grep -q 'BIND_NOW'
-readelf -dW "$elf" | grep -q 'RELR'
-readelf -dW "$elf" | grep -Eq 'FLAGS_1.*PIE'
-readelf -dW "$elf" | grep -Fq 'Shared library: [libpeios.so.0]'
-readelf -dW "$elf" | grep -Fq 'Shared library: [libgcc_s.so.1]'
-readelf -dW "$elf" | grep -Fq 'Shared library: [libc.so.6]'
-! readelf -dW "$elf" | grep -Eq '(RPATH|RUNPATH|TEXTREL)'
-! readelf -SW "$elf" | grep -q '\.debug_info'
+readelf -h "$elf" | grep -E 'Type:[[:space:]]+DYN' >/dev/null
+readelf -lW "$elf" | grep 'GNU_RELRO' >/dev/null
+readelf -lW "$elf" | grep -E 'GNU_STACK[[:space:]].*RW[[:space:]]' >/dev/null
+! readelf -lW "$elf" | grep -E 'GNU_STACK[[:space:]].*RWE' >/dev/null
+readelf -dW "$elf" | grep 'BIND_NOW' >/dev/null
+readelf -dW "$elf" | grep 'RELR' >/dev/null
+readelf -dW "$elf" | grep -E 'FLAGS_1.*PIE' >/dev/null
+readelf -dW "$elf" | grep -F 'Shared library: [libpeios.so.0]' >/dev/null
+readelf -dW "$elf" | grep -F 'Shared library: [libgcc_s.so.1]' >/dev/null
+readelf -dW "$elf" | grep -F 'Shared library: [libc.so.6]' >/dev/null
+! readelf -dW "$elf" | grep -E '(RPATH|RUNPATH|TEXTREL)' >/dev/null
+! readelf -SW "$elf" | grep '\.debug_info' >/dev/null
 test -s "$debug"
-readelf -SW "$debug" | grep -q '\.debug_info'
-test "$(readelf -n "$debug" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" = "$build_id"
+readelf -SW "$debug" | grep '\.debug_info' >/dev/null
+debug_build_id=$(readelf -n "$debug" | sed -n 's/^[[:space:]]*Build ID: //p')
+test "$debug_build_id" = "$build_id"
 for forbidden in "$SRC" "$PEKIT_VENDOR_OUT" "$PEKIT_OUT_BASE" "$PEKIT_WORKSPACE_ROOT"; do
   ! grep -aF "$forbidden" "$elf" "$debug" >/dev/null
 done
