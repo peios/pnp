@@ -4,7 +4,7 @@ architecture = "x86_64"
 description  = "Exact debug sources for the PNP observer service"
 
 [dependencies]
-"dev.peios.pnpd-debuginfo" = "= {{version}}-2"
+"dev.peios.pnpd-debuginfo" = "= {{version}}-1"
 
 [files]
 "@source:LICENSE"   = "usr/share/licenses/dev.peios.pnpd-debugsource/LICENSE"

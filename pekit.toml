@@ -47,7 +47,7 @@ if external:
 '''
 
 [build.vendor.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"dev.peios.build-essentials-rust" = "= 1.0.0-1"
 "org.mozilla.ca-certificates"     = "*"
 "org.python.python3"              = "*"
 
@@ -166,7 +166,7 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 '''
 
 [build.main.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"dev.peios.build-essentials-rust" = "= 1.0.0-1"
 "org.gnu.gzip"                    = "*"
 "org.python.python3"              = "*"
 "org.llvm.clang-devel"            = ">= 22, < 23"
@@ -263,7 +263,7 @@ done
 '''
 
 [test.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = "= 1.0.0-9"
+"dev.peios.build-essentials-rust" = "= 1.0.0-1"
 "org.gnu.gzip"                    = "*"
 "org.python.python3"              = "*"
 "org.llvm.clang-devel"            = ">= 22, < 23"
