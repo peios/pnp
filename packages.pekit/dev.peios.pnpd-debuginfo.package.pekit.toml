@@ -3,7 +3,7 @@ name        = "dev.peios.pnpd-debuginfo"
 description = "Debugging symbols for the PNP observer service"
 
 [dependencies]
-"dev.peios.pnpd" = "= {{version}}-1"
+"dev.peios.pnpd" = "= {{release}}"
 
 [files]
 "@source:LICENSE"              = "usr/share/licenses/dev.peios.pnpd-debuginfo/LICENSE"

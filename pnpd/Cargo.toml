@@ -1,6 +1,6 @@
 [package]
 name = "pnpd"
-version = "0.5.3"
+version = "0.5.4"
 edition = "2021"
 description = "Peios Network Policy daemon: observation, the verdict stream, and policy authoring"
 license = "MIT"

@@ -66,10 +66,6 @@ export CARGO_BUILD_JOBS=${CARGO_BUILD_JOBS:-4}
 mkdir -p "$CARGO_HOME"
 cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 
-if test -d /usr/libexec/coreutils-build; then
-  export PATH=/usr/libexec/coreutils-build:$PATH
-fi
-
 for tool in cargo rustc gcc pkg-config python3 find sort cmp grep sed gzip readelf objcopy strip debugedit; do
   command -v "$tool" >/dev/null || {
     echo "pnpd: missing required build tool: $tool" >&2
@@ -78,10 +74,7 @@ for tool in cargo rustc gcc pkg-config python3 find sort cmp grep sed gzip reade
 done
 
 unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-test "$(pkg-config --modversion peios)" = 0.5.0 || {
-  echo "pnpd: dev.peios.libpeios-devel 0.5.0 is required" >&2
-  exit 1
-}
+. "$SRC/packaging/check-libpeios.sh"
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 
 cargo metadata --locked --offline --no-deps --format-version 1 |
@@ -168,9 +161,9 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 "dev.peios.build-essentials-rust" = "= 1.0.0-1"
 "org.gnu.gzip"                    = "*"
 "org.python.python3"              = "*"
-"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.llvm.clang-devel"            = ">= 22.1.8"
 "org.pkgconf.pkgconf"             = "*"
-"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+"dev.peios.libpeios-devel"        = ">= 0.5.0"
 
 [test]
 gate = true
@@ -181,9 +174,12 @@ export CARGO_HOME=$PEKIT_OUT/cargo-home
 mkdir -p "$CARGO_HOME"
 cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-test "$(pkg-config --modversion peios)" = 0.5.0
+. packaging/check-libpeios.sh
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Dwarnings"
+# Control-flow protection (PEI-1155): test code is instrumented like build.main.
+export RUSTC_BOOTSTRAP=1
+RUSTFLAGS="$RUSTFLAGS -Zcf-protection=full"
 cargo test --release --workspace --locked --offline --target-dir "$PEKIT_OUT/tests"
 
 # Validate the exact staged package output produced by build.main.
@@ -227,21 +223,33 @@ PY
 readelf -h "$elf" | grep -E 'Type:[[:space:]]+DYN' >/dev/null
 readelf -lW "$elf" | grep 'GNU_RELRO' >/dev/null
 readelf -lW "$elf" | grep -E 'GNU_STACK[[:space:]].*RW[[:space:]]' >/dev/null
-! readelf -lW "$elf" | grep -E 'GNU_STACK[[:space:]].*RWE' >/dev/null
+if readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RWE'; then
+  echo "pnpd: executable stack" >&2
+  exit 1
+fi
 readelf -dW "$elf" | grep 'BIND_NOW' >/dev/null
 readelf -dW "$elf" | grep 'RELR' >/dev/null
 readelf -dW "$elf" | grep -E 'FLAGS_1.*PIE' >/dev/null
 readelf -dW "$elf" | grep -F 'Shared library: [libpeios.so.0]' >/dev/null
 readelf -dW "$elf" | grep -F 'Shared library: [libgcc_s.so.1]' >/dev/null
 readelf -dW "$elf" | grep -F 'Shared library: [libc.so.6]' >/dev/null
-! readelf -dW "$elf" | grep -E '(RPATH|RUNPATH|TEXTREL)' >/dev/null
-! readelf -SW "$elf" | grep '\.debug_info' >/dev/null
+if readelf -dW "$elf" | grep -Eq '(RPATH|RUNPATH|TEXTREL)'; then
+  echo "pnpd: forbidden dynamic tag" >&2
+  exit 1
+fi
+if readelf -SW "$elf" | grep -q '\.debug_info'; then
+  echo "pnpd: unsplit debug information" >&2
+  exit 1
+fi
 test -s "$debug"
 readelf -SW "$debug" | grep '\.debug_info' >/dev/null
 debug_build_id=$(readelf -n "$debug" | sed -n 's/^[[:space:]]*Build ID: //p')
 test "$debug_build_id" = "$build_id"
 for forbidden in "$SRC" "$PEKIT_VENDOR_OUT" "$PEKIT_OUT_BASE" "$PEKIT_WORKSPACE_ROOT"; do
-  ! grep -aF "$forbidden" "$elf" "$debug" >/dev/null
+  if grep -aqF "$forbidden" "$elf" "$debug"; then
+    echo "pnpd: build path leaked into payload: $forbidden" >&2
+    exit 1
+  fi
 done
 '''
 
@@ -249,6 +257,6 @@ done
 "dev.peios.build-essentials-rust" = "= 1.0.0-1"
 "org.gnu.gzip"                    = "*"
 "org.python.python3"              = "*"
-"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.llvm.clang-devel"            = ">= 22.1.8"
 "org.pkgconf.pkgconf"             = "*"
-"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+"dev.peios.libpeios-devel"        = ">= 0.5.0"

@@ -1,6 +1,3 @@
-# Shared production metadata. Revision 2 introduces the immutable Cargo graph, exact source/debug
-# artifacts, deterministic builds, a manual, and fail-closed validation.
-
 format = "peipkg"
 
 [package]
@@ -8,4 +5,4 @@ version       = "{{version}}-1"
 architecture  = "x86_64"
 license       = "MIT AND Apache-2.0 AND BSD-3-Clause AND ISC AND Unicode-3.0 AND Unlicense"
 license_class = "free"
-homepage      = "https://peios.org"
+homepage      = "https://github.com/peios/pnp"
