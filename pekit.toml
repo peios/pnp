@@ -110,8 +110,22 @@ install -m 0755 "$PEKIT_OUT/target-a/release/pnpd" "$PEKIT_OUT/usr/sbin/pnpd"
 install -m 0644 "$SRC/registry.d/pnpd-service.reg" "$PEKIT_OUT/usr/share/regim/pnpd-service.reg"
 gzip -9n < "$SRC/man/pnpd.8" > "$PEKIT_OUT/usr/share/man/man8/pnpd.8.gz"
 
-python3 "$SRC/tools/collect-rust-metadata.py" --licence-root "$LICENSE_ROOT"
+# Ship the notices of every crate pnpd links and hold each package
+# definition to the conjunction of their licences (PEI-1163). peios-rs
+# carries no package-local notice; ship the reviewed notice of that same
+# pinned source.
+for definition in dev.peios.pnpd dev.peios.pnpd-debuginfo dev.peios.pnpd-debugsource; do
+  /usr/libexec/peios-packaging/collect-rust-licences \
+    --licence-root "$LICENSE_ROOT" --root pnpd \
+    --notice "git+https://github.com/peios/peios-rs.git=third-party/peios-rs-LICENSE" \
+    --check "packages.pekit/$definition.package.pekit.toml"
+done
 test -s "$LICENSE_ROOT/crate-licenses.tsv"
+
+# The debug split stays local rather than using
+# /usr/libexec/peios-packaging/split-debug: the vendored crates' sources
+# live in $PEKIT_VENDOR_OUT, outside any single build root split-debug
+# copies sources from; the loop below resolves them there.
 
 debug_list=$PEKIT_OUT/.debug-pnpd
 elf=$PEKIT_OUT/usr/sbin/pnpd
@@ -164,6 +178,7 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 "org.llvm.clang-devel"            = ">= 22.1.8"
 "org.pkgconf.pkgconf"             = "*"
 "dev.peios.libpeios-devel"        = ">= 0.5.0"
+"dev.peios.packaging-tools"       = "*"
 
 [test]
 gate = true

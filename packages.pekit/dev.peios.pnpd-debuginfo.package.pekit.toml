@@ -1,6 +1,8 @@
 [package]
 name        = "dev.peios.pnpd-debuginfo"
 description = "Debugging symbols for the PNP observer service"
+# The same crate closure as pnpd; checked by build.main.
+license     = "((MIT OR Apache-2.0) AND Unicode-3.0) AND Apache-2.0 AND (Apache-2.0 OR MIT) AND BSD-3-Clause AND ISC AND MIT AND (MIT OR Unlicense)"
 
 [dependencies]
 "dev.peios.pnpd" = "= {{release}}"

@@ -6,6 +6,9 @@ side_effects = ["man-db"]
 [package]
 name        = "dev.peios.pnpd"
 description = "Experimental Peios Network Policy observer and editor"
+# The crate closure pnpd links; build.main's collect-rust-licences --check
+# holds this to what those crates declare.
+license     = "((MIT OR Apache-2.0) AND Unicode-3.0) AND Apache-2.0 AND (Apache-2.0 OR MIT) AND BSD-3-Clause AND ISC AND MIT AND (MIT OR Unlicense)"
 
 
 
