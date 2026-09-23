@@ -174,6 +174,11 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 "dev.peios.libpeios-devel"        = "= 0.5.0-1"
 
 [build.main.dependencies.apt]
+# The libpeios SDK and PKM UAPI headers come from the signed catalogue
+# (pkgs/_debroot_); Debian has no Peios ABI packages.
+"dev.peios.libpeios"       = "= 0.5.0-1"
+"dev.peios.libpeios-devel" = "= 0.5.0-1"
+"dev.peios.kernel-headers" = "*"
 dash         = "*"
 coreutils    = "*"
 findutils    = "*"
@@ -271,6 +276,9 @@ done
 "dev.peios.libpeios-devel"        = "= 0.5.0-1"
 
 [test.dependencies.apt]
+"dev.peios.libpeios"       = "= 0.5.0-1"
+"dev.peios.libpeios-devel" = "= 0.5.0-1"
+"dev.peios.kernel-headers" = "*"
 dash         = "*"
 coreutils    = "*"
 findutils    = "*"
