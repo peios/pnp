@@ -104,6 +104,13 @@ if expected != "0.0.0-localdev" and versions != [expected]:
 '
 
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Dwarnings --remap-path-prefix=$PEKIT_WORKSPACE_ROOT=$DEBUG_PREFIX/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=$DEBUG_PREFIX/.build --remap-path-prefix=$SRC=$DEBUG_PREFIX --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=$DEBUG_PREFIX/vendor"
+# Control-flow protection (PEI-1155). Peios' libstd is built with LLVM's CET
+# instrumentation (org.rust-lang.rust); stable rustc applies it to other
+# crates only under -Zcf-protection, so every crate here gets ENDBR landing
+# pads and the IBT/SHSTK property survives the link. The bootstrap escape
+# hatch is the one the Rust recipe itself uses for the same flag.
+export RUSTC_BOOTSTRAP=1
+RUSTFLAGS="$RUSTFLAGS -Zcf-protection=full"
 
 for target in target-a target-b; do
   CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
