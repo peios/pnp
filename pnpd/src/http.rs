@@ -323,6 +323,9 @@ fn engine_json(server: &Server) -> String {
         .num("refusals_bypassed", s.refusals_bypassed as i128)
         .num("teardowns_emitted", s.teardowns_emitted as i128)
         .num("identity_unresolved", s.identity_unresolved as i128)
+        .num("changes_noted", s.changes_noted as i128)
+        .num("changes_walked", s.changes_walked as i128)
+        .num("contexts", s.contexts as i128)
         .finish()
 }
 

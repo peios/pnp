@@ -1,7 +1,7 @@
-//! The verdict stream: /dev/peios-pnp, drained into a ring the HTTP layer
+//! The verdict stream: /dev/peios-ntfe, drained into a ring the HTTP layer
 //! serves, plus the engine STATUS ioctl polled on a slow tick.
 //!
-//! Struct layouts mirror the canonical ABI in pkm/uapi/pkm/pnp.h (also
+//! Struct layouts mirror the canonical ABI in pkm/uapi/pkm/ntfe.h (also
 //! machine-mirrored in pkm/uapi/generated/rust). Hand-copied here because
 //! pnpd builds from its own repo; the sizes are asserted and the ABI field
 //! is checked at open. Experimental ABI — pnpd and the kernel ship
@@ -28,7 +28,7 @@ pub const EV_F_FAIL_CLOSED: u8 = 0x02;
 pub const EV_F_REJECT_DEGRADED: u8 = 0x04;
 pub const EV_F_REJUDGED: u8 = 0x08;
 
-/// Mirror of `struct peios_pnp_event` (pkm/uapi/pkm/pnp.h).
+/// Mirror of `struct peios_ntfe_event` (pkm/uapi/pkm/ntfe.h).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PnpEvent {
@@ -74,12 +74,12 @@ pub struct PnpEvent {
 
 const _: () = assert!(std::mem::size_of::<PnpEvent>() == 456);
 
-/// A SID's binary form, at its largest (`PEIOS_PNP_SID_LEN`).
+/// A SID's binary form, at its largest (`PEIOS_NTFE_SID_LEN`).
 pub const SID_LEN: usize = 68;
-/// A per-service SID's binary form (`PEIOS_PNP_SERVICE_SID_LEN`).
+/// A per-service SID's binary form (`PEIOS_NTFE_SERVICE_SID_LEN`).
 pub const SERVICE_SID_LEN: usize = 32;
 
-/// What stood at an endpoint (`PEIOS_PNP_EV_LOCAL_*`).
+/// What stood at an endpoint (`PEIOS_NTFE_EV_LOCAL_*`).
 pub const LOCAL_ABSENT: u8 = 0;
 pub const LOCAL_PROGRAM: u8 = 1;
 pub const LOCAL_KERNEL: u8 = 2;
@@ -126,7 +126,7 @@ impl PnpEvent {
     }
 }
 
-/// Mirror of `struct peios_pnp_status` (pkm/uapi/pkm/pnp.h).
+/// Mirror of `struct peios_ntfe_status` (pkm/uapi/pkm/ntfe.h).
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PnpStatus {
@@ -172,12 +172,18 @@ pub struct PnpStatus {
     pub refusals_bypassed: u64,
     pub teardowns_emitted: u64,
     pub identity_unresolved: u64,
-    pub _reserved: [u64; 2],
+    /// In force (ABI 5): changes to the Network key the engine has noted,
+    /// and the count the last finished re-walk started from.
+    pub changes_noted: u64,
+    pub changes_walked: u64,
+    /// Interfaces in the network context table.
+    pub contexts: u64,
+    pub _reserved: [u64; 1],
 }
 
-const _: () = assert!(std::mem::size_of::<PnpStatus>() == 352);
+const _: () = assert!(std::mem::size_of::<PnpStatus>() == 368);
 
-/// Mirror of `struct peios_pnp_counter_rec` (pkm/uapi/pkm/pnp.h).
+/// Mirror of `struct peios_ntfe_counter_rec` (pkm/uapi/pkm/ntfe.h).
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct PnpCounterRec {
@@ -199,7 +205,7 @@ pub struct PnpCounterRec {
 
 const _: () = assert!(std::mem::size_of::<PnpCounterRec>() == 232);
 
-/// Mirror of `struct peios_pnp_counters_query`.
+/// Mirror of `struct peios_ntfe_counters_query`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PnpCountersQuery {
@@ -225,7 +231,7 @@ pub struct CountersDump {
 pub const FLOW_MAX_TAGS: usize = 8;
 pub const FLOW_SENTENCES: usize = 2;
 
-/// Mirror of `struct peios_pnp_flow_rec` (ABI 3). The sentences and tags
+/// Mirror of `struct peios_ntfe_flow_rec` (ABI 3). The sentences and tags
 /// are parallel scalar arrays (UAPI records hold scalars only).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -289,7 +295,7 @@ impl PnpFlowRec {
     }
 }
 
-/// Mirror of `struct peios_pnp_listener_rec` (pkm/uapi/pkm/pnp.h): one
+/// Mirror of `struct peios_ntfe_listener_rec` (pkm/uapi/pkm/ntfe.h): one
 /// socket prepared to receive, and by whom.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -330,7 +336,7 @@ impl PnpListenerRec {
     }
 }
 
-/// Mirror of `struct peios_pnp_listeners_query`.
+/// Mirror of `struct peios_ntfe_listeners_query`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PnpListenersQuery {
@@ -349,7 +355,7 @@ pub struct ListenersDump {
     pub total: u32,
 }
 
-/// Mirror of `struct peios_pnp_flows_query`.
+/// Mirror of `struct peios_ntfe_flows_query`.
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 pub struct PnpFlowsQuery {
@@ -368,26 +374,26 @@ pub struct FlowsDump {
     pub total: u32,
 }
 
-/// _IOR('N', 1, struct peios_pnp_status): dir=2, size, type 'N', nr 1.
+/// _IOR('N', 1, struct peios_ntfe_status): dir=2, size, type 'N', nr 1.
 const IOC_STATUS: libc::c_ulong =
     (2u64 << 30 | (std::mem::size_of::<PnpStatus>() as u64) << 16 | (b'N' as u64) << 8 | 1)
         as libc::c_ulong;
-/// _IOWR('N', 2, struct peios_pnp_counters_query): dir=3.
+/// _IOWR('N', 2, struct peios_ntfe_counters_query): dir=3.
 const IOC_COUNTERS: libc::c_ulong =
     (3u64 << 30 | (std::mem::size_of::<PnpCountersQuery>() as u64) << 16 | (b'N' as u64) << 8 | 2)
         as libc::c_ulong;
-/// _IOWR('N', 3, struct peios_pnp_flows_query): dir=3.
+/// _IOWR('N', 3, struct peios_ntfe_flows_query): dir=3.
 const IOC_FLOWS: libc::c_ulong =
     (3u64 << 30 | (std::mem::size_of::<PnpFlowsQuery>() as u64) << 16 | (b'N' as u64) << 8 | 3)
         as libc::c_ulong;
-/// _IOWR('N', 4, struct peios_pnp_listeners_query): dir=3.
+/// _IOWR('N', 4, struct peios_ntfe_listeners_query): dir=3.
 const IOC_LISTENERS: libc::c_ulong =
     (3u64 << 30 | (std::mem::size_of::<PnpListenersQuery>() as u64) << 16 | (b'N' as u64) << 8 | 4)
         as libc::c_ulong;
 /// Most listeners one dump asks for (a machine has tens, not thousands).
 const LISTENERS_DUMP_MAX: usize = 1024;
 /// The kernel ABI this daemon speaks (the identity facts slice).
-const ABI: u64 = 4;
+const ABI: u64 = 5;
 /// Most cells one dump asks for (the kernel caps tables at 4096 keys;
 /// the viewer is a debugging surface, not a census).
 const COUNTERS_DUMP_MAX: usize = 4096;
@@ -395,7 +401,7 @@ const COUNTERS_DUMP_MAX: usize = 4096;
 /// (the kernel reports how many exist, so a short dump is visible).
 const FLOWS_DUMP_MAX: usize = 2048;
 
-const DEVICE: &str = "/dev/peios-pnp";
+const DEVICE: &str = "/dev/peios-ntfe";
 const RING: usize = 8192;
 
 struct Inner {
@@ -607,7 +613,7 @@ pub fn run(engine: Arc<Engine>) {
         match refresh_status(&file, &engine) {
             Ok(abi) if abi == ABI => {
                 log::info(&format!(
-                    "verdict stream: connected to /dev/peios-pnp (abi {ABI})"
+                    "verdict stream: connected to /dev/peios-ntfe (abi {ABI})"
                 ));
                 let dup = unsafe { libc::dup(file.as_raw_fd()) };
                 engine.set_dev_fd(if dup >= 0 { Some(dup) } else { None });

@@ -55,7 +55,7 @@ fn main() {
     };
     std::thread::spawn(move || cap.run());
 
-    // The kernel verdict stream (retries until /dev/peios-pnp exists).
+    // The kernel verdict stream (retries until /dev/peios-ntfe exists).
     let eng = engine::Engine::new(port);
     {
         let eng = eng.clone();

@@ -194,6 +194,8 @@
   <div class="estats">
     <span id="e-state" class="permissive-flag">engine: –</span>
     <span>gen <b id="e-gen">–</b></span>
+    <span title="Changes to the Network key the engine has noted but not yet walked: 0 means everything written is in force (or was refused, see the warning)">pending <b id="e-pending">–</b></span>
+    <span title="Interfaces the engine holds a network context for (Network.Id, Name, Trust)">contexts <b id="e-ctx">–</b></span>
     <span>judged <b id="e-judged">0</b></span>
     <span>pass <b id="e-pass">0</b></span>
     <span>drop <b id="e-drop">0</b></span>
@@ -908,6 +910,8 @@ function setEngine(e) {
   else if (e.enforcing) { state.textContent = `engine: ENFORCING`; state.className = "enforcing"; }
   else { state.textContent = "engine: permissive (gen 0)"; state.className = "permissive-flag"; }
   $("e-gen").textContent = e.generation;
+  $("e-pending").textContent = Math.max(0, Number(e.changes_noted || 0) - Number(e.changes_walked || 0));
+  $("e-ctx").textContent = e.contexts ?? "–";
   $("e-judged").textContent = e.judged;
   $("e-own").textContent = e.own_verdicts_hidden || 0;
   $("e-pass").textContent = e.verdict_pass;
