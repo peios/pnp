@@ -694,3 +694,41 @@ fn stream(file: &File, engine: &Arc<Engine>) -> Result<(), String> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tcp4_event(seq: u64, src: u16, dst: u16) -> PnpEvent {
+        let mut ev: PnpEvent = unsafe { std::mem::zeroed() };
+        ev.seq = seq;
+        ev.addr_family = 4;
+        ev.protocol = 6;
+        ev.src_port = src;
+        ev.dst_port = dst;
+        ev
+    }
+
+    #[test]
+    fn own_port_verdicts_are_hidden_and_counted() {
+        let engine = Engine::new(7370);
+        // Our own HTTP flow, from either side, in either family: hidden
+        // from what we serve, and counted.
+        engine.push(tcp4_event(1, 40000, 7370));
+        engine.push(tcp4_event(2, 7370, 40000));
+        let mut v6 = tcp4_event(3, 40001, 7370);
+        v6.addr_family = 6;
+        engine.push(v6);
+        assert!(engine.since(0).is_empty());
+        assert_eq!(engine.own_hidden(), 3);
+
+        // Everything else passes: TCP on another port, UDP on ours.
+        engine.push(tcp4_event(4, 40000, 443));
+        let mut udp = tcp4_event(5, 40000, 7370);
+        udp.protocol = 17;
+        engine.push(udp);
+        let seen: Vec<u64> = engine.since(0).iter().map(|e| e.seq).collect();
+        assert_eq!(seen, vec![4, 5]);
+        assert_eq!(engine.own_hidden(), 3, "passing events are not counted");
+    }
+}
