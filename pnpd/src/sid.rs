@@ -35,12 +35,16 @@ pub fn sid_text(bytes: &[u8]) -> Option<String> {
     Some(out)
 }
 
-/// A process GUID as lowercase hyphenated text (8-4-4-4-12).
+/// A process GUID as lowercase hyphenated text (8-4-4-4-12), the fields
+/// as PCDS §2 (String Format) writes them: Data1, Data2 and Data3 are
+/// little-endian numbers, most significant nibble first; Data4 is bytes in
+/// order. The same text the kernel gives the `Local.Process` fact.
 pub fn guid_text(guid: &[u8]) -> String {
-    let hex: String = guid.iter().map(|b| format!("{b:02x}")).collect();
-    if hex.len() != 32 {
-        return hex;
+    if guid.len() != 16 {
+        return guid.iter().map(|b| format!("{b:02x}")).collect();
     }
+    const ORDER: [usize; 16] = [3, 2, 1, 0, 5, 4, 7, 6, 8, 9, 10, 11, 12, 13, 14, 15];
+    let hex: String = ORDER.iter().map(|&i| format!("{:02x}", guid[i])).collect();
     format!(
         "{}-{}-{}-{}-{}",
         &hex[..8],
@@ -222,8 +226,12 @@ mod tests {
     }
 
     #[test]
-    fn guid_text_is_hyphenated_lowercase() {
-        let guid: Vec<u8> = (0..16u8).collect();
-        assert_eq!(guid_text(&guid), "00010203-0405-0607-0809-0a0b0c0d0e0f");
+    fn guid_text_is_pcds_hyphenated_lowercase() {
+        // PCDS §2's own example.
+        let guid = [
+            0x04, 0x03, 0x02, 0x01, 0x06, 0x05, 0x08, 0x07, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+            0x0f, 0x10,
+        ];
+        assert_eq!(guid_text(&guid), "01020304-0506-0708-090a-0b0c0d0e0f10");
     }
 }
