@@ -6,4 +6,4 @@ members = ["pnpd"]
 libc = "0.2"
 # The reviewed libpeios-0.5-compatible userspace API. Releases must never
 # depend on whichever sibling checkout happens to be present at build time.
-peios = { git = "https://github.com/peios/peios-rs.git", rev = "f4309f78fbaa878a14429a5e07d778dba9ddfab7", package = "peios" }
+peios = { git = "https://github.com/peios/peios-rs.git", rev = "f8c84930f2b71763bcf0550df0b1420a0f63b21e", package = "peios" }
